@@ -20,3 +20,5 @@ ASSETS_PATH: str = os.getenv("ASSETS_PATH", str(PIPELINE_ROOT / "assets"))
 # Redis / Celery
 # --------------------------------------------------------------------------- #
 REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+FISH_API_KEY: str = os.getenv("FISH_API_KEY", "")
+FISH_MODEL: str = os.getenv("FISH_MODEL", "s1")

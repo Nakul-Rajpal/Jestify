@@ -12,6 +12,8 @@ from shared.contracts.api_types import (  # noqa: F401
     DocumentUploadResponse,
     CharacterInfo,
     CharacterListResponse,
+    VoiceInfo,
+    VoiceListResponse,
 )
 from shared.contracts.pipeline_schema import (  # noqa: F401
     SceneInstruction,

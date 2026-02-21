@@ -34,6 +34,12 @@ services:
       DATABASE_URL: postgresql://jestify:devpassword@postgres:5432/jestify
       REDIS_URL: redis://redis:6379/0
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      FISH_API_KEY: ${FISH_API_KEY}
+      FISH_MODEL: ${FISH_MODEL:-s1}
+      FISH_VOICE_ID_LEBRON: ${FISH_VOICE_ID_LEBRON}
+      FISH_VOICE_ID_GOKU: ${FISH_VOICE_ID_GOKU}
+      FISH_VOICE_ID_PETER: ${FISH_VOICE_ID_PETER}
+      FISH_VOICE_ID_ROGAN: ${FISH_VOICE_ID_ROGAN}
       STORAGE_PATH: /app/storage
     depends_on:
       - postgres
@@ -46,6 +52,8 @@ services:
     command: celery -A pipeline.worker worker -Q video_pipeline -c 1 --loglevel=info
     environment:
       REDIS_URL: redis://redis:6379/0
+      FISH_API_KEY: ${FISH_API_KEY}
+      FISH_MODEL: ${FISH_MODEL:-s1}
       STORAGE_PATH: /app/storage
     depends_on:
       - redis

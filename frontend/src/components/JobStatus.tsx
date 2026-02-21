@@ -44,14 +44,14 @@ function getStatusMessage(
 
 function getCharacterName(character: Character | null): string {
   switch (character) {
-    case Character.SPONGEBOB:
-      return "SpongeBob";
-    case Character.SUPERMAN:
-      return "Superman";
-    case Character.EINSTEIN:
-      return "Einstein";
-    case Character.PIRATE:
-      return "Captain Blackbeard";
+    case Character.LEBRON:
+      return "LeBron";
+    case Character.GOKU:
+      return "Goku";
+    case Character.PETER:
+      return "Peter Griffin";
+    case Character.ROGAN:
+      return "Joe Rogan";
     default:
       return "your character";
   }

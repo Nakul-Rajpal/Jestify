@@ -146,6 +146,7 @@ def generate_video_task(
     difficulty: str,
     extracted_text: str,
     prompt: Optional[str] = None,
+    voice_id: Optional[str] = None,
 ):
     """
     Main Celery task picked up by the pipeline worker.
@@ -205,6 +206,7 @@ def generate_video_task(
             script=script,
             character=Character(character),
             output_path=output_path,
+            voice_id=voice_id,
         )
 
         # Step 3: Run the full rendering pipeline

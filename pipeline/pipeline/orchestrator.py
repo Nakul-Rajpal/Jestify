@@ -102,6 +102,7 @@ class PipelineOrchestrator:
                 self._voice_synth.synthesize(
                     text=scene.narration_text,
                     character_id=character.value,
+                    voice_id=pipeline_input.voice_id,
                     output_path=audio_path,
                 )
                 audio_clips.append(audio_path)

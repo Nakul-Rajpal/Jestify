@@ -70,10 +70,19 @@ class ManimRenderer:
                 "manimgl executable not found. "
                 "Make sure manimgl is installed: pip install manimgl"
             )
-        logger.info("[render] ManimGL executable: %s", manimgl_path)
+        # `which` may return a relative path (e.g. ".venv/bin/manimgl").
+        # Rendering runs from a temp scene directory, so force absolute.
+        manimgl_exec = Path(manimgl_path).expanduser()
+        if not manimgl_exec.is_absolute():
+            manimgl_exec = (Path.cwd() / manimgl_exec).resolve()
+        if not manimgl_exec.exists():
+            raise RuntimeError(
+                f"manimgl executable path does not exist: {manimgl_exec}"
+            )
+        logger.info("[render] ManimGL executable: %s", manimgl_exec)
 
         cmd.extend([
-            manimgl_path,
+            str(manimgl_exec),
             str(scene_py),
             class_name,
             "-o",

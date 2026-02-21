@@ -2,10 +2,10 @@ from enum import Enum
 
 
 class Character(str, Enum):
-    SPONGEBOB = "spongebob"
-    SUPERMAN = "superman"
-    EINSTEIN = "einstein"
-    PIRATE = "pirate"
+    LEBRON = "lebron"
+    GOKU = "goku"
+    PETER = "peter"
+    ROGAN = "rogan"
 
 
 class Difficulty(str, Enum):

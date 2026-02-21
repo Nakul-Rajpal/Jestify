@@ -36,6 +36,7 @@ class PipelineInput(BaseModel):
     script: GeneratedScript
     character: Character
     output_path: str
+    voice_id: Optional[str] = None
 
 
 class PipelineOutput(BaseModel):

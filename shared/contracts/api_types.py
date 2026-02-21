@@ -10,6 +10,7 @@ class GenerateRequest(BaseModel):
     difficulty: Difficulty
     document_ids: List[str]
     prompt: Optional[str] = None
+    voice_id: Optional[str] = None
 
 
 class GenerateResponse(BaseModel):
@@ -92,3 +93,15 @@ class TopicDetailResponse(BaseModel):
     sort_order: int
     subject_name: str
     videos: List[VideoSummary]
+
+
+class VoiceInfo(BaseModel):
+    id: str
+    name: str
+    description: str
+    is_public: bool
+    language: Optional[str] = None
+
+
+class VoiceListResponse(BaseModel):
+    voices: List[VoiceInfo]

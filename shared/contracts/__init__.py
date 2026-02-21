@@ -11,6 +11,8 @@ from .api_types import (
     TopicSummary,
     VideoSummary,
     TopicDetailResponse,
+    VoiceInfo,
+    VoiceListResponse,
 )
 from .pipeline_schema import (
     SceneInstruction,

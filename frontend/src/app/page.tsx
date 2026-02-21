@@ -30,7 +30,7 @@ export default function Home() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
 
-  const { upload, isUploading } = useDocumentUpload();
+  const { upload, isUploading, error: uploadError } = useDocumentUpload();
   const { status, progress, currentStep, videoUrl, thumbnailUrl, error, isPolling } =
     useJobPolling(currentJobId);
 
@@ -154,7 +154,15 @@ export default function Home() {
           </div>
         )}
 
-        {/* Error from generation */}
+        {/* Upload / generation errors */}
+        {uploadError && !hasActiveJob && (
+          <div className="mt-6 max-w-md mx-auto">
+            <div className="bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-3 text-center">
+              <p className="text-sm text-red-400">{uploadError}</p>
+            </div>
+          </div>
+        )}
+
         {generateError && !hasActiveJob && (
           <div className="mt-6 max-w-md mx-auto">
             <div className="bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-3 text-center">

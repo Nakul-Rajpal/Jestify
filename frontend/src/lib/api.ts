@@ -35,7 +35,8 @@ export async function getCharacters(): Promise<CharacterListResponse> {
 }
 
 export async function uploadDocument(
-  file: File
+  file: File,
+  signal?: AbortSignal
 ): Promise<DocumentUploadResponse> {
   const formData = new FormData();
   formData.append("file", file);
@@ -43,6 +44,7 @@ export async function uploadDocument(
   return request<DocumentUploadResponse>("/api/documents/upload", {
     method: "POST",
     body: formData,
+    signal,
   });
 }
 

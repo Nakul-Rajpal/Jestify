@@ -53,6 +53,7 @@ def generate_video_task(
     difficulty: str,
     extracted_text: str,
     prompt: Optional[str] = None,
+    voice_id: Optional[str] = None,
 ) -> dict:
     """
     Main Celery task that orchestrates the video generation pipeline.
@@ -68,6 +69,7 @@ def generate_video_task(
         difficulty: Difficulty enum value string.
         extracted_text: Combined extracted text from all documents.
         prompt: Optional user prompt for additional instructions.
+        voice_id: Optional Fish Audio voice model ID selected by the user.
 
     Returns:
         A dict with the pipeline result.
@@ -118,6 +120,7 @@ def generate_video_task(
             script=script,
             character=Character(character),
             output_path=output_path,
+            voice_id=voice_id,
         )
 
         # Step 3: Dispatch to pipeline worker
