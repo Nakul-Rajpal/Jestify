@@ -38,12 +38,24 @@ DIFFICULTY_INSTRUCTIONS: dict[Difficulty, str] = {
 
 # Available ManimGL scene types for the LLM to choose from
 AVAILABLE_SCENE_TYPES = """
-Available ManimGL scene types you can use:
-- "equation": Display and animate mathematical equations (LaTeX). Parameters: {"latex": "E = mc^2", "steps": ["step1_latex", "step2_latex"]}
-- "graph": Plot a mathematical function or data. Parameters: {"function": "x**2", "x_range": [-5, 5], "y_range": [0, 25], "labels": {"x": "x", "y": "f(x)"}}
-- "diagram": Show a conceptual diagram with labeled nodes and edges. Parameters: {"nodes": [{"label": "A", "position": [0, 0]}], "edges": [{"from": "A", "to": "B"}]}
-- "text": Display key text points with animations. Parameters: {"title": "Key Concept", "bullets": ["Point 1", "Point 2"]}
-- "geometry": Show geometric shapes and transformations. Parameters: {"shapes": [{"type": "circle", "radius": 1}], "transformations": ["rotate", "scale"]}
+Available ManimGL scene types you can use (with EXACT parameter formats):
+
+1. "equation": Animate LaTeX equations step-by-step.
+   Parameters: {"steps": ["x^2 + 1", "x^2 + 1 = 0"], "title": "Solving the equation"}
+
+2. "graph": Plot a math function on axes.
+   Parameters: {"func_str": "x**2", "x_range": [-5, 5, 1], "y_range": [0, 25, 5], "title": "Parabola", "color": "BLUE"}
+
+3. "diagram": Nodes and edges diagram.
+   Parameters: {"nodes": [{"label": "Input", "position": [-3, 0]}, {"label": "Output", "position": [3, 0]}], "edges": [[0, 1]]}
+   IMPORTANT: edges are pairs of node INDICES (integers), e.g. [[0, 1], [1, 2]]
+
+4. "text": Animated bullet points.
+   Parameters: {"title": "Key Concepts", "bullets": ["First point", "Second point"]}
+
+5. "geometry": Geometric shapes.
+   Parameters: {"shapes": [{"type": "circle", "radius": 1.0, "color": "BLUE", "position": [0, 0]}, {"type": "square", "side_length": 2.0}], "title": "Shapes"}
+   Shape types: circle, square, triangle, line
 """
 
 
@@ -142,12 +154,12 @@ You must respond with ONLY a valid JSON object (no markdown, no extra text) with
 }}
 
 GUIDELINES:
-- Create 4-8 scenes that progressively build understanding
-- Each scene should focus on ONE concept or step
-- Narration should be 2-4 sentences per scene
+- Target a ~5 minute video: create exactly 3-4 scenes (no more!)
+- Each scene should be 60-90 seconds with focused narration (2-3 sentences)
 - Use the character's voice consistently
 - Choose the most appropriate scene type for each concept
 - Include at least one equation or graph scene if the content involves math/science
+- Keep it concise -- better to explain fewer concepts well than many poorly
 - The intro should hook the viewer and the outro should summarize key takeaways
 """
 

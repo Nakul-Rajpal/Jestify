@@ -4,4 +4,8 @@ redis>=5.0.0
 soundfile
 pillow
 pydantic>=2.0
+pydantic-settings
 python-dotenv
+anthropic
+setuptools<78
+audioop-lts
