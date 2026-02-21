@@ -1,12 +1,13 @@
 """Service for generating educational scripts using the Anthropic Claude API.
 
-Claude generates complete ManimGL Python code for each scene, producing
-3Blue1Brown-quality animations with full LaTeX support (bmatrix, align, etc.).
+Two-phase generation:
+  Phase 1 — Narration: Rich, lecture-style script (8-15 sentences/scene)
+  Phase 2 — ManimGL:  Complete animation code timed to match the narration
 """
 
 import json
 import logging
-from typing import Optional
+from typing import Callable, Optional
 
 import anthropic
 
@@ -44,7 +45,7 @@ DIFFICULTY_INSTRUCTIONS: dict[Difficulty, str] = {
 }
 
 # -------------------------------------------------------------------- #
-# ManimGL code generation reference
+# ManimGL code generation reference (used only in Phase 2)
 # -------------------------------------------------------------------- #
 
 MANIMGL_REFERENCE = r"""
@@ -144,10 +145,19 @@ IMPORTANT RULES:
 
 
 class ScriptGenerator:
-    """Generates structured educational scripts using Claude."""
+    """Generates structured educational scripts using Claude.
+
+    Two-phase process:
+      1. Generate narration (lecture-style, 8-15 sentences/scene)
+      2. Generate ManimGL code aligned to the narration timing
+    """
 
     def __init__(self) -> None:
         self.client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+
+    # ------------------------------------------------------------------ #
+    # Public API
+    # ------------------------------------------------------------------ #
 
     def generate(
         self,
@@ -155,13 +165,16 @@ class ScriptGenerator:
         character: Character,
         difficulty: Difficulty,
         user_prompt: Optional[str] = None,
+        on_progress: Optional[Callable[[str, int], None]] = None,
     ) -> GeneratedScript:
-        """Generate an educational script from the provided text."""
+        """Generate a full educational script (narration + ManimGL code).
+
+        Two sequential LLM calls:
+          Call 1 — narration only (no code)
+          Call 2 — ManimGL code matched to the narration
+        """
         personality = CHARACTER_PERSONALITIES[character]
         difficulty_instruction = DIFFICULTY_INSTRUCTIONS[difficulty]
-
-        system_prompt = self._build_system_prompt(personality, difficulty_instruction)
-        user_message = self._build_user_message(extracted_text, user_prompt)
 
         logger.info(
             "Generating script: character=%s, difficulty=%s, text_length=%d",
@@ -170,33 +183,68 @@ class ScriptGenerator:
             len(extracted_text),
         )
 
+        # ---- Phase 1: narration ---------------------------------------- #
+        narration_data = self._generate_narration(
+            extracted_text, personality, difficulty_instruction, user_prompt
+        )
+
+        narration_data["character"] = character.value
+        narration_data["difficulty"] = difficulty.value
+        narration_data["language"] = "en"
+        narration_script = GeneratedScript(**narration_data)
+
+        logger.info(
+            "Phase 1 complete: %d scenes, title='%s'",
+            narration_script.total_scenes,
+            narration_script.title,
+        )
+
+        if on_progress:
+            on_progress("generating_animations", 15)
+
+        # ---- Phase 2: ManimGL code ------------------------------------ #
+        complete_script = self._generate_manim_code(
+            narration_script, extracted_text, difficulty_instruction
+        )
+
+        logger.info("Phase 2 complete: ManimGL code generated for all scenes")
+        return complete_script
+
+    # ------------------------------------------------------------------ #
+    # Phase 1 — Narration generation
+    # ------------------------------------------------------------------ #
+
+    def _generate_narration(
+        self,
+        extracted_text: str,
+        personality,
+        difficulty_instruction: str,
+        user_prompt: Optional[str],
+    ) -> dict:
+        """Call 1: generate narration-only script (no manim_code)."""
+        system_prompt = self._build_narration_system_prompt(
+            personality, difficulty_instruction
+        )
+        user_message = self._build_narration_user_message(extracted_text, user_prompt)
+
+        logger.info("Phase 1: Calling Claude for narration script...")
+
         response = self.client.messages.create(
             model=CLAUDE_MODEL,
-            max_tokens=16384,
+            max_tokens=8192,
             system=system_prompt,
             messages=[{"role": "user", "content": user_message}],
         )
 
-        response_text = response.content[0].text
-        script_data = self._parse_response(response_text)
+        return self._parse_response(response.content[0].text)
 
-        script_data["character"] = character.value
-        script_data["difficulty"] = difficulty.value
-        script_data["language"] = "en"
-
-        return GeneratedScript(**script_data)
-
-    def _build_system_prompt(self, personality, difficulty_instruction: str) -> str:
-        """Build the system prompt for direct ManimGL code generation."""
+    def _build_narration_system_prompt(
+        self, personality, difficulty_instruction: str
+    ) -> str:
         return f"""\
-You are an educational content script writer and ManimGL programmer. Your job is \
-to create engaging educational video scripts with complete, runnable ManimGL Python \
-code for each scene. The animations must be of 3Blue1Brown quality — rich, visual, \
-and mathematically precise.
-
-You MUST carefully analyze the source material to understand what mathematical \
-concepts, functions, and relationships it contains, then write ManimGL code that \
-VISUALLY explains them with proper LaTeX, matrices, graphs, and step-by-step animations.
+You are an educational content script writer. Your job is to create engaging, \
+lecture-style educational video scripts. You do NOT generate any code — only \
+narration text and scene structure.
 
 CHARACTER PERSONA:
 - Name: {personality.display_name}
@@ -214,10 +262,7 @@ CRITICAL — ANALOGY QUALITY RULES:
 - Draw analogies from SPECIFIC events, relationships, and experiences in the \
 character's Background & Lore above — not just surface-level domain keywords.
 - Every analogy must MAP the educational concept to a concrete story or situation \
-from the character's history. For example, if explaining exponential growth as \
-SpongeBob, relate it to how Plankton's schemes escalate in complexity, or how \
-SpongeBob's jellyfish collection grows — do NOT just say "this is like flipping \
-Krabby Patties."
+from the character's history.
 - Each scene should have at least one DEEP analogy that connects the concept \
 being taught to a specific narrative moment from the character's background.
 - Avoid generic catchphrase-only references. The analogy should help the student \
@@ -226,19 +271,32 @@ UNDERSTAND the concept better, not just be entertaining.
 DIFFICULTY LEVEL:
 {difficulty_instruction}
 
-{MANIMGL_REFERENCE}
+NARRATION WRITING RULES:
+- Write 8-15 sentences of narration per scene. This is a LECTURE — the character \
+talks continuously throughout. There should be NO silent gaps.
+- The narration should flow naturally as if the character is giving a live lesson.
+- Explain concepts step by step: introduce, build intuition with analogies, show \
+the math/logic, then summarize the key takeaway.
+- Each sentence should advance the explanation. Do not repeat yourself or pad \
+with filler phrases.
+- The narration is what will be spoken aloud via text-to-speech, so write in a \
+conversational, speakable style — not academic writing.
+- Include verbal cues that reference what the viewer will see on screen, e.g. \
+"Look at this matrix here", "Watch what happens when we multiply", \
+"See how the graph curves upward?"
+- Total narration across all scenes should cover 3-5 minutes of spoken content \
+(approximately 450-750 words total, or 90-150 words per scene).
 
 OUTPUT FORMAT:
-You must respond with ONLY a valid JSON object (no markdown, no extra text) with this structure:
+You must respond with ONLY a valid JSON object (no markdown, no extra text):
 {{{{
     "title": "A catchy educational title",
     "total_scenes": <number of scenes>,
     "scenes": [
         {{{{
             "scene_index": 0,
-            "narration_text": "What the character says during this scene (for voice synthesis)",
+            "narration_text": "Full lecture narration for this scene. 8-15 sentences...",
             "manim_scene_type": "custom",
-            "manim_code": "<COMPLETE Python code for this scene — a standalone .py file with one Scene class>",
             "duration_hint_seconds": 60,
             "character_action": "talking"
         }}}}
@@ -249,34 +307,18 @@ You must respond with ONLY a valid JSON object (no markdown, no extra text) with
 
 CRITICAL RULES:
 - Create 3-5 scenes for a ~5 minute video.
-- Set duration_hint_seconds to 40-90 per scene.
-- manim_scene_type should be "custom" for all scenes (the code handles everything).
-- manim_code must be a COMPLETE, STANDALONE Python file:
-  - Starts with `from manimlib import *` and `import numpy as np`
-  - Contains exactly ONE class inheriting from Scene
-  - The class name should be descriptive (e.g., MatrixMultiplication, EigenvalueDecomp)
-  - The construct method contains all animations
-- Use self.wait() generously (3-8 seconds) between steps so the narration has time.
-- Use FadeOut(Group(...)) to clear screen between major sections within a scene.
-- The last scene should be a summary/recap of key results.
-- narration_text is what the character SAYS during this scene — written in their voice.
-  Keep it natural and matching the character persona. 2-4 sentences per scene.
-- character_action: "talking" (explaining), "pointing" (showing something specific), "idle" (pausing)
-
-MANIM_CODE STRING RULES:
-- manim_code is a JSON string. Use standard JSON string escaping.
-- Use \n for newlines, \\ for a single backslash, \\\\ for a double backslash.
-- Prefer single quotes in Python code to avoid escaping double quotes.
-- IMPORTANT: In LaTeX matrices, row breaks use \\ (two backslashes).
-  In the JSON string, encode this as \\\\ (four characters in the JSON).
+- Set duration_hint_seconds to 40-90 per scene (estimate from narration length).
+- DO NOT include any "manim_code" field — leave it out entirely.
+- narration_text must be 8-15 sentences of continuous, lecture-style narration.
+- character_action: "talking" (explaining), "pointing" (showing something), "idle" (pausing)
 """
 
-    def _build_user_message(self, extracted_text: str, user_prompt: Optional[str]) -> str:
-        """Build the user message with source material."""
+    def _build_narration_user_message(
+        self, extracted_text: str, user_prompt: Optional[str]
+    ) -> str:
         message = f"""\
-Create an educational video script with complete ManimGL code based on this material.
-Analyze the mathematical content carefully and write ManimGL scenes that visually \
-explain the concepts with proper LaTeX, step-by-step animations, and clean transitions.
+Create an educational video script based on this material. Write rich, detailed \
+narration that explains the concepts step by step. Do NOT generate any code.
 
 --- SOURCE MATERIAL ---
 {extracted_text}
@@ -287,15 +329,196 @@ explain the concepts with proper LaTeX, step-by-step animations, and clean trans
 Additional instructions from the user:
 {user_prompt}
 """
-
         message += """
 Remember: respond with ONLY the JSON object, no markdown code fences or extra text.
-Each scene's manim_code must be a complete, runnable ManimGL Python file.
 """
         return message
 
+    # ------------------------------------------------------------------ #
+    # Phase 2 — ManimGL code generation
+    # ------------------------------------------------------------------ #
+
+    def _generate_manim_code(
+        self,
+        narration_script: GeneratedScript,
+        extracted_text: str,
+        difficulty_instruction: str,
+    ) -> GeneratedScript:
+        """Call 2: generate ManimGL code for each scene, timed to narration."""
+        system_prompt = self._build_manim_system_prompt(difficulty_instruction)
+        user_message = self._build_manim_user_message(narration_script, extracted_text)
+
+        logger.info("Phase 2: Calling Claude for ManimGL code...")
+
+        response = self.client.messages.create(
+            model=CLAUDE_MODEL,
+            max_tokens=16384,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_message}],
+        )
+
+        manim_entries = self._parse_manim_response(response.content[0].text)
+
+        # Merge manim_code back into the narration script
+        code_by_index = {
+            entry["scene_index"]: entry["manim_code"] for entry in manim_entries
+        }
+
+        updated_scenes = []
+        for scene in narration_script.scenes:
+            code = code_by_index.get(scene.scene_index)
+            if code:
+                updated_scenes.append(scene.model_copy(update={"manim_code": code}))
+            else:
+                logger.warning(
+                    "No manim_code returned for scene_index=%d", scene.scene_index
+                )
+                updated_scenes.append(scene)
+
+        return narration_script.model_copy(update={"scenes": updated_scenes})
+
+    def _build_manim_system_prompt(self, difficulty_instruction: str) -> str:
+        return f"""\
+You are an expert ManimGL programmer. Your job is to write complete, runnable \
+ManimGL Python code for each scene of an educational video. You will be given \
+the narration script for each scene — your code must produce animations that \
+visually accompany and reinforce what the narrator is saying.
+
+The animations must be of 3Blue1Brown quality — rich, visual, and mathematically \
+precise.
+
+You MUST carefully analyze both the source material AND the narration script to \
+understand what concepts are being explained, then write ManimGL code that \
+VISUALLY demonstrates them with proper LaTeX, matrices, graphs, and step-by-step \
+animations.
+
+DIFFICULTY LEVEL (affects visual complexity):
+{difficulty_instruction}
+
+{MANIMGL_REFERENCE}
+
+CRITICAL TIMING RULES:
+- Your code's self.wait() calls must create enough total pause time to cover \
+the narration for that scene. The narration will be played as audio over the \
+animation.
+- Calculate: the narration has roughly 150 words per minute of spoken audio. \
+Count the words in the narration_text and divide by 2.5 to estimate seconds, \
+then distribute self.wait() calls throughout your animations to match.
+- NEVER have long stretches of animation with no self.wait() — the viewer needs \
+time to absorb what they see while listening to the narration.
+- Spread self.wait() calls between EVERY major animation step, using 3-8 second \
+pauses. The total wait time across the scene should roughly match the narration \
+duration.
+- Each scene's animation should feel choreographed to the narration — when the \
+narrator says "look at this matrix", a matrix should be appearing on screen.
+
+OUTPUT FORMAT:
+You must respond with ONLY a valid JSON array (no markdown, no extra text). \
+Each element corresponds to a scene by scene_index and contains the manim_code:
+[
+    {{{{
+        "scene_index": 0,
+        "manim_code": "<COMPLETE Python code for scene 0>"
+    }}}},
+    {{{{
+        "scene_index": 1,
+        "manim_code": "<COMPLETE Python code for scene 1>"
+    }}}}
+]
+
+CRITICAL RULES:
+- Output one entry per scene, matching the scene_index values from the narration.
+- manim_code must be a COMPLETE, STANDALONE Python file:
+  - Starts with `from manimlib import *` and `import numpy as np`
+  - Contains exactly ONE class inheriting from Scene
+  - The class name should be descriptive (e.g., MatrixMultiplication, EigenvalueDecomp)
+  - The construct method contains all animations
+- Use self.wait() generously (3-8 seconds) between steps so the narration has time.
+- Use FadeOut(Group(...)) to clear screen between major sections within a scene.
+- The last scene's code should be a visual summary/recap.
+
+MANIM_CODE STRING RULES:
+- manim_code is a JSON string. Use standard JSON string escaping.
+- Use \\n for newlines, \\\\ for a single backslash.
+- Prefer single quotes in Python code to avoid escaping double quotes.
+- IMPORTANT: In LaTeX matrices, row breaks use \\\\ (two backslashes).
+  In the JSON string, encode this as \\\\\\\\ (four characters in the JSON).
+"""
+
+    def _build_manim_user_message(
+        self, narration_script: GeneratedScript, extracted_text: str
+    ) -> str:
+        scenes_text = ""
+        for scene in narration_script.scenes:
+            word_count = len(scene.narration_text.split())
+            estimated_seconds = max(int(word_count / 2.5), 30)
+            scenes_text += f"""
+--- SCENE {scene.scene_index} ---
+Narration ({word_count} words, ~{estimated_seconds}s of audio):
+{scene.narration_text}
+Duration hint: {scene.duration_hint_seconds}s
+---
+"""
+
+        return f"""\
+Generate ManimGL Python code for each scene of this educational video.
+
+VIDEO TITLE: {narration_script.title}
+
+NARRATION SCRIPT (your code must visually accompany this):
+{scenes_text}
+
+SOURCE MATERIAL (for mathematical/conceptual accuracy):
+--- SOURCE MATERIAL ---
+{extracted_text[:8000]}
+--- END SOURCE MATERIAL ---
+
+Remember: respond with ONLY the JSON array, no markdown code fences or extra text.
+Each scene's manim_code must be a complete, runnable ManimGL Python file.
+Your animations should be timed to match the narration — use self.wait() calls \
+so the total animation duration covers the spoken narration for each scene.
+"""
+
+    def _parse_manim_response(self, response_text: str) -> list[dict]:
+        """Parse Phase 2 response — a JSON array of {{scene_index, manim_code}}."""
+        text = response_text.strip()
+
+        # Strip markdown fences
+        if text.startswith("```json"):
+            text = text[7:]
+        if text.startswith("```"):
+            text = text[3:]
+        if text.endswith("```"):
+            text = text[:-3]
+        text = text.strip()
+
+        def _extract_list(obj):
+            if isinstance(obj, list):
+                return obj
+            if isinstance(obj, dict) and "scenes" in obj:
+                return obj["scenes"]
+            raise ValueError("Expected JSON array of scene entries")
+
+        try:
+            return _extract_list(json.loads(text))
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+        # Attempt repair for manim_code escaping issues
+        repaired = self._repair_json(text)
+        try:
+            return _extract_list(json.loads(repaired))
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.error("Failed to parse Phase 2 (ManimGL) response: %s", e)
+            logger.error("Response text (first 1000 chars): %s", text[:1000])
+            raise ValueError(f"Phase 2 LLM did not return valid JSON: {e}")
+
+    # ------------------------------------------------------------------ #
+    # Shared helpers
+    # ------------------------------------------------------------------ #
+
     def _parse_response(self, response_text: str) -> dict:
-        """Parse the LLM response text into a dictionary."""
+        """Parse a JSON object response from the LLM."""
         text = response_text.strip()
 
         if text.startswith("```json"):
@@ -312,7 +535,6 @@ Each scene's manim_code must be a complete, runnable ManimGL Python file.
         except json.JSONDecodeError:
             pass
 
-        # Attempt repair: fix common LLM JSON issues in manim_code strings
         repaired = self._repair_json(text)
         try:
             return json.loads(repaired)

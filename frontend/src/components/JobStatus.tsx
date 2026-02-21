@@ -23,6 +23,8 @@ function getStatusMessage(
       return "Reading and extracting text from your documents...";
     case JobStatusEnum.GENERATING_SCRIPT:
       return `Generating script in ${charName}'s voice...`;
+    case JobStatusEnum.GENERATING_ANIMATIONS:
+      return `Designing animations for ${charName}'s lesson...`;
     case JobStatusEnum.RENDERING_ANIMATIONS:
       return `Creating animations for ${charName}...`;
     case JobStatusEnum.SYNTHESIZING_VOICE:

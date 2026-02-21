@@ -45,10 +45,22 @@ make db-migrate
 ```
 
 ### 5. Start services (each in a separate terminal)
+
+**Frontend:**
 ```bash
 make dev-frontend   # http://localhost:3000
+```
+
+**Backend:**
+```bash
 make dev-backend    # http://localhost:8000
-make dev-worker     # Celery pipeline worker
+```
+
+**Pipeline worker** (from the `pipeline/` directory):
+```bash
+cd pipeline
+eval "$(/usr/libexec/path_helper)"
+PYTHONPATH=.:.. celery -A pipeline.worker worker -Q video_pipeline -c 1 --loglevel=info
 ```
 
 ### Or use Docker for everything

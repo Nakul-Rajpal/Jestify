@@ -75,22 +75,33 @@ def generate_video_task(
     logger.info(f"Starting video generation task for job {job_id}")
 
     try:
-        # Step 1: Generate script
+        # Step 1: Generate script (two-phase: narration then manim code)
         _update_redis_progress(
             job_id,
             status=JobStatus.GENERATING_SCRIPT.value,
-            progress_percent=10,
-            current_step="Generating educational script with AI...",
+            progress_percent=5,
+            current_step="Generating educational narration script...",
         )
 
         from ..services.script_generator import ScriptGenerator
 
         generator = ScriptGenerator()
+
+        def _on_script_progress(phase: str, pct: int):
+            if phase == "generating_animations":
+                _update_redis_progress(
+                    job_id,
+                    status=JobStatus.GENERATING_ANIMATIONS.value,
+                    progress_percent=pct,
+                    current_step="Designing ManimGL animation code...",
+                )
+
         script = generator.generate(
             extracted_text=extracted_text,
             character=Character(character),
             difficulty=Difficulty(difficulty),
             user_prompt=prompt,
+            on_progress=_on_script_progress,
         )
 
         _update_redis_progress(
