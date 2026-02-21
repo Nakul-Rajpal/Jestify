@@ -115,8 +115,9 @@ class SceneBuilder:
         r"""Sanitize LaTeX for ManimGL's Tex class.
 
         ManimGL cannot handle complex environments like \begin{pmatrix},
-        \begin{align}, \begin{cases}, etc.  Strip them down to simpler
-        inline math that Tex can render.
+        \begin{align}, \begin{cases}, etc.  Also cannot handle \text{},
+        \mathrm{}, \textbf{}, or semicolons inside math.  Strip them
+        all down to simple inline math that Tex can render.
         """
         # Replace \begin{pmatrix}...\end{pmatrix} with a flat representation
         def _flatten_matrix(m: re.Match) -> str:
@@ -127,7 +128,8 @@ class SceneBuilder:
             for row in rows:
                 cols = [c.strip() for c in row.split("&")]
                 flat_rows.append(", ".join(cols))
-            return "[" + "; ".join(flat_rows) + "]"
+            # Use comma-separated rows (semicolons are NOT valid LaTeX)
+            return "[" + ", ".join(flat_rows) + "]"
 
         for env in ("pmatrix", "bmatrix", "vmatrix", "Bmatrix", "matrix"):
             text = re.sub(
@@ -137,7 +139,7 @@ class SceneBuilder:
                 flags=re.DOTALL,
             )
 
-        # Replace \begin{cases}...\end{cases} with brace notation
+        # Replace \begin{cases}...\end{cases} with simple comma list
         def _flatten_cases(m: re.Match) -> str:
             body = m.group(1)
             rows = [r.strip() for r in re.split(r"\\\\", body)]
@@ -145,7 +147,7 @@ class SceneBuilder:
             for row in rows:
                 cleaned = row.replace("&", ",\\ ")
                 parts.append(cleaned)
-            return "\\{" + ";\\ ".join(parts) + "\\}"
+            return ",\\ ".join(parts)
 
         text = re.sub(
             r"\\begin\{cases\}(.*?)\\end\{cases\}",
@@ -158,12 +160,50 @@ class SceneBuilder:
         text = re.sub(r"\\begin\{[^}]+\}", "", text)
         text = re.sub(r"\\end\{[^}]+\}", "", text)
 
+        # Strip \text{...}, \mathrm{...}, \textbf{...}, \textit{...}
+        # Replace with just the inner content (no braces)
+        for cmd in ("text", "mathrm", "textbf", "textit", "mbox", "hbox"):
+            text = re.sub(rf"\\{cmd}\{{([^}}]*)\}}", r" \1 ", text)
+
+        # Replace semicolons with commas (semicolons crash LaTeX math mode)
+        text = text.replace(";", ",")
+
+        # Strip double-backslash row breaks that might remain (invalid in Tex)
+        text = text.replace("\\\\", " ")
+
+        # Collapse multiple spaces
+        text = re.sub(r"  +", " ", text)
+
         return text.strip()
 
     @staticmethod
     def _col(color: str) -> str:
         """Return a validated ManimGL colour constant name."""
         return color if color in _VALID_COLORS else "WHITE"
+
+    @staticmethod
+    def _ascii_safe(text: str) -> str:
+        """Replace common Unicode math symbols with ASCII equivalents.
+
+        ManimGL Text() *can* handle Unicode via Pango, but some fonts
+        lack glyphs for subscript digits, Greek letters, etc.  This
+        converts the most common offenders to safe ASCII representations.
+        """
+        _map = {
+            "\u03bb": "lambda", "\u03b1": "alpha", "\u03b2": "beta",
+            "\u03b3": "gamma", "\u03b4": "delta", "\u03b5": "epsilon",
+            "\u03c3": "sigma", "\u03c4": "tau", "\u03c9": "omega",
+            "\u03bc": "mu", "\u03c0": "pi", "\u03b8": "theta",
+            "\u2081": "_1", "\u2082": "_2", "\u2083": "_3",
+            "\u2084": "_4", "\u2080": "_0",
+            "\u00b2": "^2", "\u00b3": "^3",
+            "\u2192": "->", "\u2190": "<-", "\u2194": "<->",
+            "\u2265": ">=", "\u2264": "<=", "\u2260": "!=",
+            "\u221e": "inf",
+        }
+        for uc, asc in _map.items():
+            text = text.replace(uc, asc)
+        return text
 
     @staticmethod
     def _pos3(raw) -> list:
@@ -366,18 +406,25 @@ class SceneBuilder:
         self._emit_camera_focus("axes", 8, lines)
         lines.append("        self.wait(2)")
 
-        # Primary graph — always trace it with a dot for visual appeal
+        # Primary graph — wrap function to catch domain errors
+        lines.append(f"        def _graph_func(x):")
+        lines.append(f"            try:")
+        lines.append(f"                _val = {func_str}")
+        lines.append(f"                return _val if np.isfinite(_val) else 0")
+        lines.append(f"            except Exception:")
+        lines.append(f"                return 0")
         lines.append(
-            f"        graph = axes.get_graph(lambda x: {func_str}, color={color})"
+            f"        graph = axes.get_graph(_graph_func, color={color})"
         )
         # Animated drawing of the curve
         lines.append("        self.play(ShowCreation(graph), run_time=3)")
 
         # Graph label
         if label:
-            safe_label = self._safe(label)
+            safe_label = self._safe(self._ascii_safe(label))
             lines.append(
-                f'        graph_label = axes.get_graph_label(graph, Text("{safe_label}", font_size=24))'
+                f'        graph_label = Text("{safe_label}", font_size=24, color={color})'
+                f".next_to(graph.get_end(), UR, buff=0.2)"
             )
             lines.append("        self.play(FadeIn(graph_label))")
 
@@ -396,11 +443,15 @@ class SceneBuilder:
         # Mark some key points on the graph (x=0, midpoint of range)
         mid_x = (x_range[0] + x_range[1]) / 2
         lines.append(f"        # Key point marker")
+        lines.append(f"        _kf = lambda x: {func_str}")
+        lines.append(f"        try:")
+        lines.append(f"            _ky = round(_kf({mid_x}), 2)")
+        lines.append(f"        except Exception:")
+        lines.append(f"            _ky = 0")
         lines.append(f"        key_dot = Dot(axes.i2gp({mid_x}, graph), color=RED, radius=0.08)")
         lines.append(f"        self.play(FadeIn(key_dot, scale=2))")
         lines.append(
-            f'        key_label = Text("({mid_x}, " + '
-            f'str(round((lambda x: {func_str})({mid_x}), 2)) + ")", '
+            f'        key_label = Text(f"({mid_x}, {{_ky}})", '
             f"font_size=18, color=RED).next_to(key_dot, UR, buff=0.1)"
         )
         lines.append("        self.play(FadeIn(key_label))")
@@ -419,15 +470,21 @@ class SceneBuilder:
             )
             lines.append("        self.play(FadeIn(area), run_time=2)")
             lines.append("        self.wait(2)")
-            # Add boundary lines
+            # Add boundary lines — use the graph function safely
+            lines.append(f"        _af = lambda x: {func_str}")
+            lines.append(f"        try:")
+            lines.append(f"            _y_left = _af({a_min})")
+            lines.append(f"            _y_right = _af({a_max})")
+            lines.append(f"        except Exception:")
+            lines.append(f"            _y_left, _y_right = 0, 0")
             lines.append(
                 f"        left_line = DashedLine("
-                f"axes.c2p({a_min}, 0), axes.c2p({a_min}, (lambda x: {func_str})({a_min})), "
+                f"axes.c2p({a_min}, 0), axes.c2p({a_min}, _y_left), "
                 f"color=GREY)"
             )
             lines.append(
                 f"        right_line = DashedLine("
-                f"axes.c2p({a_max}, 0), axes.c2p({a_max}, (lambda x: {func_str})({a_max})), "
+                f"axes.c2p({a_max}, 0), axes.c2p({a_max}, _y_right), "
                 f"color=GREY)"
             )
             lines.append(
@@ -460,7 +517,7 @@ class SceneBuilder:
             )
             # Slope label
             lines.append(
-                f'        slope_label = Text("slope = " + str(round(_slope, 2)), '
+                f'        slope_label = Text(f"slope = {{round(_slope, 2)}}", '
                 f'font_size=20, color={t_col}).next_to(tan_dot, UR, buff=0.2)'
             )
             lines.append("        self.play(FadeIn(slope_label))")
@@ -477,10 +534,10 @@ class SceneBuilder:
             )
             lines.append(f"        self.play(ShowCreation(sec_graph{j}), run_time=2)")
             if sf_label:
-                safe_sf = self._safe(sf_label)
+                safe_sf = self._safe(self._ascii_safe(sf_label))
                 lines.append(
-                    f'        sec_label{j} = axes.get_graph_label('
-                    f'sec_graph{j}, Text("{safe_sf}", font_size=24))'
+                    f'        sec_label{j} = Text("{safe_sf}", font_size=24, color={sf_col})'
+                    f".next_to(sec_graph{j}.get_end(), UR, buff=0.2)"
                 )
                 lines.append(f"        self.play(FadeIn(sec_label{j}))")
             lines.append("        self.wait(2)")
@@ -692,7 +749,7 @@ class SceneBuilder:
         title = params.get("title", "")
         concepts: list[dict | str] = params.get(
             "concepts",
-            params.get("bullets", ["Punkt 1"]),
+            params.get("bullets", ["Concept 1"]),
         )
         arrangement = params.get("arrangement", "vertical")
 
@@ -710,7 +767,7 @@ class SceneBuilder:
         emphasis_indices: list[int] = []
         for i, concept in enumerate(concepts):
             if isinstance(concept, dict):
-                text = concept.get("text", f"Pojęcie {i + 1}")
+                text = concept.get("text", f"Concept {i + 1}")
                 col = self._col(concept.get("color", "BLUE"))
                 if concept.get("emphasis", False):
                     emphasis_indices.append(i)
@@ -1017,11 +1074,11 @@ class SceneBuilder:
         gets Flash emphasis, camera pulls back."""
         class_name = f"SummaryScene{scene_index}"
 
-        title = params.get("title", "Podsumowanie")
+        title = params.get("title", "Summary")
         items: list[dict] = params.get("items", [])
         if not items:
             # Fallback for missing items
-            items = [{"tex": "?", "label": "Brak danych", "color": "WHITE"}]
+            items = [{"tex": "?", "label": "No data", "color": "WHITE"}]
 
         lines = [
             "from manimlib import *",

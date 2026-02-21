@@ -332,10 +332,15 @@ LATEX RULES (CRITICAL — violations cause rendering failures):
 - Use ONLY simple inline LaTeX. Examples: "x^2 + 3x - 1", "\\frac{{a}}{{b}}", "\\sum_{{n=1}}^{{N}} a_n"
 - NEVER use LaTeX environments: NO \\begin{{...}} or \\end{{...}} of any kind.
 - NEVER use: pmatrix, bmatrix, matrix, align, cases, array, tabular, gathered, split.
-- For matrices: write them as plain text like "A = [0, 4, 3; 0, -6, 2]" or split into separate equations.
+- NEVER use: \\text{{...}}, \\mathrm{{...}}, \\textbf{{...}}, \\mbox{{...}} — these crash the renderer.
+  Instead of "\\text{{ eigenvalues: }}" just write " eigenvalues: " as plain spacing.
+- NEVER use semicolons (;) inside LaTeX strings — they crash the renderer.
+  Instead of "[a; b]" use "[a, b]".
+- For matrices: write as "A = [[row1], [row2]]" using commas only. Example: "A = [[0, 4, 3], [0, -6, 2]]"
 - For piecewise functions: use separate equation steps instead of \\begin{{cases}}.
 - Keep each LaTeX string to a SINGLE LINE of math — no multi-line constructs.
 - Use single backslashes: \\frac, \\sum, \\int — NOT double backslashes.
+- Do NOT use Unicode symbols in labels — use ASCII only (e.g., "lambda_1" not "λ₁").
 - Keep narration concise: 2-3 sentences per scene.
 """
 
