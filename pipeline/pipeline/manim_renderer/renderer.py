@@ -1,6 +1,8 @@
 """Executes ManimGL via subprocess to render scene files into MP4 clips."""
 
 import logging
+import platform
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -11,11 +13,7 @@ _RENDER_TIMEOUT_SECONDS = 300
 
 
 class ManimRenderer:
-    """Renders a generated ManimGL scene Python file into an MP4 video.
-
-    Uses ``xvfb-run`` to provide a virtual display so rendering works in
-    headless server environments.
-    """
+    """Renders a generated ManimGL scene Python file into an MP4 video."""
 
     def __init__(self, timeout: int = _RENDER_TIMEOUT_SECONDS):
         self._timeout = timeout
@@ -43,17 +41,44 @@ class ManimRenderer:
         scene_py = Path(scene_py_path).resolve()
         output_dir = scene_py.parent / "media"
 
-        cmd = [
-            "xvfb-run", "-a",
-            "manimgl",
+        logger.info("[render] Scene file: %s", scene_py)
+        logger.info("[render] Class name: %s", class_name)
+        logger.info("[render] Output directory: %s", output_dir)
+
+        # Read and log the generated scene source
+        try:
+            source = scene_py.read_text()
+            logger.info("[render] Scene source (%d chars):\n%s", len(source), source[:1000])
+        except Exception as e:
+            logger.warning("[render] Could not read scene file: %s", e)
+
+        # Build command - skip xvfb-run on macOS (not needed, not available)
+        cmd = []
+        if platform.system() == "Linux" and shutil.which("xvfb-run"):
+            cmd.extend(["xvfb-run", "-a"])
+            logger.info("[render] Using xvfb-run for headless rendering")
+        else:
+            logger.info("[render] Running ManimGL directly (platform: %s)", platform.system())
+
+        # Find manimgl executable
+        manimgl_path = shutil.which("manimgl")
+        if not manimgl_path:
+            raise RuntimeError(
+                "manimgl executable not found. "
+                "Make sure manimgl is installed: pip install manimgl"
+            )
+        logger.info("[render] ManimGL executable: %s", manimgl_path)
+
+        cmd.extend([
+            manimgl_path,
             str(scene_py),
             class_name,
             "-o",
             "--file_name", class_name,
             "--video_dir", str(output_dir),
-        ]
+        ])
 
-        logger.info("Rendering: %s", " ".join(cmd))
+        logger.info("[render] Running command: %s", " ".join(cmd))
 
         try:
             result = subprocess.run(
@@ -64,35 +89,53 @@ class ManimRenderer:
                 cwd=str(scene_py.parent),
             )
         except subprocess.TimeoutExpired as exc:
+            logger.error("[render] TIMEOUT after %ds for %s::%s", self._timeout, scene_py_path, class_name)
             raise RuntimeError(
                 f"ManimGL render timed out after {self._timeout}s "
                 f"for {scene_py_path}::{class_name}"
             ) from exc
 
+        logger.info("[render] Exit code: %d", result.returncode)
+
+        if result.stdout:
+            logger.info("[render] stdout:\n%s", result.stdout[:2000])
+        if result.stderr:
+            logger.info("[render] stderr:\n%s", result.stderr[:2000])
+
         if result.returncode != 0:
-            logger.error("ManimGL stderr:\n%s", result.stderr)
+            logger.error("[render] FAILED for %s::%s (exit %d)", scene_py_path, class_name, result.returncode)
             raise RuntimeError(
                 f"ManimGL render failed (exit {result.returncode}) "
                 f"for {scene_py_path}::{class_name}:\n{result.stderr[:2000]}"
             )
 
-        # Locate the output file -- ManimGL writes into output_dir
+        # Locate the output file
         mp4_path = self._find_output_mp4(output_dir, class_name)
-        logger.info("Rendered %s -> %s", class_name, mp4_path)
+        logger.info("[render] SUCCESS: %s -> %s", class_name, mp4_path)
         return mp4_path
 
     @staticmethod
     def _find_output_mp4(output_dir: Path, class_name: str) -> str:
         """Search the output directory for the rendered MP4 file."""
+        logger.info("[render] Searching for output MP4 in: %s", output_dir)
+
+        # List all files in output_dir for debugging
+        if output_dir.exists():
+            all_files = list(output_dir.rglob("*"))
+            logger.info("[render] Files in output dir: %s", [str(f) for f in all_files[:20]])
+        else:
+            logger.warning("[render] Output directory does not exist: %s", output_dir)
+
         # ManimGL typically outputs to <video_dir>/1080p30/<ClassName>.mp4
-        # or similar resolution sub-directories.
         candidates = list(output_dir.rglob(f"{class_name}.mp4"))
         if candidates:
+            logger.info("[render] Found exact match: %s", candidates[0])
             return str(candidates[0])
 
         # Fallback: return any mp4 found
         all_mp4s = list(output_dir.rglob("*.mp4"))
         if all_mp4s:
+            logger.info("[render] Using fallback MP4: %s", all_mp4s[0])
             return str(all_mp4s[0])
 
         raise FileNotFoundError(

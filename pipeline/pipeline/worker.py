@@ -3,7 +3,9 @@
 import json
 import logging
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 # Ensure project root is on sys.path so shared.contracts is importable.
 _PROJECT_ROOT = str(Path(__file__).resolve().parents[2])
@@ -11,17 +13,15 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 # Also ensure pipeline/ dir is on sys.path so 'pipeline' package is importable
-# when running celery from the pipeline/ directory.
 _PIPELINE_DIR = str(Path(__file__).resolve().parents[1])
 if _PIPELINE_DIR not in sys.path:
     sys.path.insert(0, _PIPELINE_DIR)
 
 from celery import Celery
 
-from shared.contracts.enums import JobStatus
-from shared.contracts.pipeline_schema import PipelineInput, PipelineOutput
+from shared.contracts.enums import Character, Difficulty, JobStatus
+from shared.contracts.pipeline_schema import PipelineInput
 from pipeline.config import REDIS_URL
-from pipeline.orchestrator import PipelineOrchestrator
 
 logger = logging.getLogger(__name__)
 
@@ -49,73 +49,146 @@ app.conf.update(
 # --------------------------------------------------------------------------- #
 
 def _redis_client():
-    """Return a Redis client (lazy import to avoid hard dep at module level)."""
-    import redis
-    return redis.Redis.from_url(REDIS_URL, decode_responses=True)
+    import redis as _redis
+    return _redis.Redis.from_url(REDIS_URL, decode_responses=True)
 
 
-def _set_job_status(job_id: str, status: JobStatus, extra: dict | None = None):
-    """Persist job status and optional metadata into Redis."""
-    r = _redis_client()
-    payload = {"status": status.value}
-    if extra:
-        payload.update(extra)
-    r.hset(f"job:{job_id}", mapping=payload)
-
-
-# --------------------------------------------------------------------------- #
-# Celery task
-# --------------------------------------------------------------------------- #
-
-@app.task(bind=True, name="pipeline.generate_video")
-def generate_video_task(self, job_id: str, pipeline_input_json: str):
-    """Main Celery task: receives a job and drives the full pipeline.
-
-    Parameters
-    ----------
-    job_id : str
-        Unique identifier for this generation job.
-    pipeline_input_json : str
-        JSON-serialised ``PipelineInput`` object.
-    """
-    logger.info("Starting pipeline for job %s", job_id)
-
-    # --- deserialise -------------------------------------------------------
+def _update_redis_progress(
+    job_id: str,
+    status: str,
+    progress_percent: int,
+    current_step: str,
+    error_message: Optional[str] = None,
+    video_url: Optional[str] = None,
+    thumbnail_url: Optional[str] = None,
+):
+    """Push live progress to Redis so the backend jobs endpoint can read it."""
     try:
-        pipeline_input = PipelineInput.model_validate_json(pipeline_input_json)
-    except Exception as exc:
-        logger.exception("Failed to deserialise PipelineInput for job %s", job_id)
-        _set_job_status(job_id, JobStatus.FAILED, {"error": str(exc)})
-        raise
+        r = _redis_client()
+        now = datetime.now(timezone.utc).isoformat()
+        data = {
+            "status": status,
+            "progress_percent": progress_percent,
+            "current_step": current_step,
+            "error_message": error_message,
+            "video_url": video_url,
+            "thumbnail_url": thumbnail_url,
+            "created_at": now,
+            "updated_at": now,
+        }
+        r.set(f"job:{job_id}", json.dumps(data), ex=3600)
+        r.close()
+    except Exception as e:
+        logger.warning(f"Failed to update Redis progress for job {job_id}: {e}")
 
-    # --- progress callback -------------------------------------------------
-    def _on_progress(status: JobStatus, progress_pct: int):
-        _set_job_status(
+
+# --------------------------------------------------------------------------- #
+# Celery task — matches the name the backend dispatches
+# --------------------------------------------------------------------------- #
+
+@app.task(bind=True, name="backend.app.tasks.video_task.generate_video_task")
+def generate_video_task(
+    self,
+    job_id: str,
+    character: str,
+    difficulty: str,
+    extracted_text: str,
+    prompt: Optional[str] = None,
+):
+    """
+    Main Celery task picked up by the pipeline worker.
+
+    This task:
+    1. Generates the educational script using Claude
+    2. Runs the ManimGL rendering pipeline
+    3. Updates job status in Redis throughout
+    """
+    logger.info(f"Starting video generation for job {job_id}")
+
+    try:
+        # Step 1: Generate script using Claude
+        _update_redis_progress(
             job_id,
-            status,
-            {"progress": progress_pct},
+            status=JobStatus.GENERATING_SCRIPT.value,
+            progress_percent=10,
+            current_step="Generating educational script with AI...",
         )
 
-    # --- run orchestrator --------------------------------------------------
-    orchestrator = PipelineOrchestrator(status_callback=_on_progress)
+        from backend.app.services.script_generator import ScriptGenerator
 
-    try:
-        output: PipelineOutput = orchestrator.run(pipeline_input)
-    except Exception as exc:
-        logger.exception("Pipeline failed for job %s", job_id)
-        _set_job_status(job_id, JobStatus.FAILED, {"error": str(exc)})
-        raise
+        generator = ScriptGenerator()
+        script = generator.generate(
+            extracted_text=extracted_text,
+            character=Character(character),
+            difficulty=Difficulty(difficulty),
+            user_prompt=prompt,
+        )
 
-    # --- persist result ----------------------------------------------------
-    _set_job_status(
-        job_id,
-        JobStatus.COMPLETED,
-        {
-            "progress": 100,
+        logger.info(f"Script generated for job {job_id}: {script.total_scenes} scenes")
+
+        # Step 2: Build pipeline input and run orchestrator
+        _update_redis_progress(
+            job_id,
+            status=JobStatus.RENDERING_ANIMATIONS.value,
+            progress_percent=20,
+            current_step="Script generated. Starting video rendering...",
+        )
+
+        from pipeline.config import STORAGE_PATH
+        output_path = f"{STORAGE_PATH}/videos/{job_id}/final.mp4"
+
+        pipeline_input = PipelineInput(
+            job_id=job_id,
+            script=script,
+            character=Character(character),
+            output_path=output_path,
+        )
+
+        # Step 3: Run the full rendering pipeline
+        from pipeline.orchestrator import PipelineOrchestrator
+
+        def _on_progress(status: JobStatus, progress_pct: int):
+            step_messages = {
+                JobStatus.RENDERING_ANIMATIONS: "Rendering ManimGL animations...",
+                JobStatus.SYNTHESIZING_VOICE: "Synthesizing character voice...",
+                JobStatus.COMPOSITING: "Compositing character overlay...",
+                JobStatus.ASSEMBLING: "Assembling final video...",
+            }
+            _update_redis_progress(
+                job_id,
+                status=status.value,
+                progress_percent=progress_pct,
+                current_step=step_messages.get(status, "Processing..."),
+            )
+
+        orchestrator = PipelineOrchestrator(status_callback=_on_progress)
+        output = orchestrator.run(pipeline_input)
+
+        # Step 4: Mark completed
+        _update_redis_progress(
+            job_id,
+            status=JobStatus.COMPLETED.value,
+            progress_percent=100,
+            current_step="Video generation complete.",
+            video_url=f"/api/jobs/{job_id}/video",
+        )
+
+        logger.info(f"Pipeline completed for job {job_id} -> {output.video_path}")
+
+        return {
+            "job_id": job_id,
+            "status": "completed",
             "video_path": output.video_path,
-            "duration_seconds": str(output.duration_seconds),
-        },
-    )
-    logger.info("Pipeline completed for job %s -> %s", job_id, output.video_path)
+            "duration_seconds": output.duration_seconds,
+        }
 
-    return output.model_dump()
+    except Exception as e:
+        logger.error(f"Video generation failed for job {job_id}: {e}", exc_info=True)
+        _update_redis_progress(
+            job_id,
+            status=JobStatus.FAILED.value,
+            progress_percent=0,
+            current_step="Failed",
+            error_message=str(e),
+        )
+        raise

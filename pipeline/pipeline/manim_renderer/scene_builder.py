@@ -186,7 +186,9 @@ class SceneBuilder:
         node_lines = []
         for i, node in enumerate(nodes):
             label = node.get("label", f"N{i}")
-            pos = node.get("position", [0, 0, 0])
+            raw_pos = node.get("position", [0, 0, 0])
+            # Normalize to 3D — handle [x,y] or [x,y,z]
+            pos = list(raw_pos) + [0] * (3 - len(raw_pos))
             safe_label = label.replace('"', '\\"')
             node_lines.append(
                 f'        node{i} = Text("{safe_label}").move_to([{pos[0]}, {pos[1]}, {pos[2]}])'
@@ -294,7 +296,8 @@ class SceneBuilder:
         for i, shape in enumerate(shapes):
             shape_type = shape.get("type", "circle")
             color = shape.get("color", "WHITE")
-            pos = shape.get("position", [0, 0, 0])
+            raw_pos = shape.get("position", [0, 0, 0])
+            pos = list(raw_pos) + [0] * (3 - len(raw_pos))
 
             if shape_type == "circle":
                 radius = shape.get("radius", 1.0)
@@ -311,8 +314,10 @@ class SceneBuilder:
                     f"        shape{i} = Triangle(color={color}).move_to([{pos[0]}, {pos[1]}, {pos[2]}])"
                 )
             elif shape_type == "line":
-                start = shape.get("start", [-2, 0, 0])
-                end = shape.get("end", [2, 0, 0])
+                raw_start = shape.get("start", [-2, 0, 0])
+                raw_end = shape.get("end", [2, 0, 0])
+                start = list(raw_start) + [0] * (3 - len(raw_start))
+                end = list(raw_end) + [0] * (3 - len(raw_end))
                 shape_lines.append(
                     f"        shape{i} = Line([{start[0]}, {start[1]}, {start[2]}], [{end[0]}, {end[1]}, {end[2]}], color={color})"
                 )
