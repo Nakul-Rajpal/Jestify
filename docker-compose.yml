@@ -1,0 +1,64 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: jestify
+      POSTGRES_USER: jestify
+      POSTGRES_PASSWORD: devpassword
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    depends_on:
+      - backend
+
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://jestify:devpassword@postgres:5432/jestify
+      REDIS_URL: redis://redis:6379/0
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      STORAGE_PATH: /app/storage
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - storage:/app/storage
+
+  pipeline-worker:
+    build: ./pipeline
+    command: celery -A pipeline.worker worker -Q video_pipeline -c 1 --loglevel=info
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_PATH: /app/storage
+    depends_on:
+      - redis
+    volumes:
+      - storage:/app/storage
+
+  flower:
+    image: mher/flower
+    ports:
+      - "5555:5555"
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+
+volumes:
+  pgdata:
+  storage:
