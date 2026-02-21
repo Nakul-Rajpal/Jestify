@@ -51,7 +51,7 @@ DIFFICULTY_INSTRUCTIONS: dict[Difficulty, str] = {
 MANIMGL_REFERENCE = r"""
 You write complete ManimGL Python code for each scene. Each scene is a standalone
 Python file with one Scene class. The code will be executed by ManimGL to render
-an animation clip.
+an animation clip for a modern YouTube / mobile-first audience.
 
 EXAMPLE OF HIGH-QUALITY MANIMGL CODE:
 
@@ -59,60 +59,130 @@ EXAMPLE OF HIGH-QUALITY MANIMGL CODE:
 from manimlib import *
 import numpy as np
 
-class SVDDecomposition(Scene):
+class ConceptOverview(Scene):
     def construct(self):
-        # --- Title ---
-        title = Text("Singular Value Decomposition", font_size=48, color=BLUE)
-        subtitle = Text("Finding U, Sigma, and V", font_size=36).next_to(title, DOWN)
-        self.play(Write(title), FadeIn(subtitle, UP))
-        self.wait(3)
-        self.play(FadeOut(title), FadeOut(subtitle))
+        # --- Title (bold, large, safe-zone padding) ---
+        title = Text('Key Principles', font_size=44, weight=BOLD)
+        title.to_edge(UP, buff=0.5)
+        self.play(Write(title), rate_func=rush_from)
+        self.wait(2)
 
-        # --- Show the matrix ---
-        matrix_a = Tex(r"A = \begin{bmatrix} 0 & 4 & 3 \\ 0 & -6 & 2 \end{bmatrix}")
-        matrix_a.to_edge(UP)
-        self.play(Write(matrix_a))
+        # --- Bullet list with LaggedStart ---
+        bullets = VGroup(
+            Text('1. Break information into chunks', font_size=30),
+            Text('2. Use visuals over raw text', font_size=30),
+            Text('3. Animate progressively', font_size=30),
+        ).arrange(DOWN, aligned_edge=LEFT, buff=0.4)
+        bullets.next_to(title, DOWN, buff=0.6).to_edge(LEFT, buff=0.8)
+
+        self.play(LaggedStart(
+            *[FadeIn(b, shift=RIGHT*0.3) for b in bullets],
+            lag_ratio=0.2
+        ))
         self.wait(4)
 
-        # --- Compute A^T A ---
-        ata_text = Tex(r"A^T A = \begin{bmatrix} 0 & 0 \\ 4 & -6 \\ 3 & 2 \end{bmatrix} \begin{bmatrix} 0 & 4 & 3 \\ 0 & -6 & 2 \end{bmatrix}")
-        ata_result = Tex(r"A^T A = \begin{bmatrix} 0 & 0 & 0 \\ 0 & 52 & 0 \\ 0 & 0 & 13 \end{bmatrix}")
-
-        self.play(Write(ata_text))
-        self.wait(5)
-        self.play(ReplacementTransform(ata_text, ata_result))
-
-        hint = Text("It's a diagonal matrix!", color=YELLOW, font_size=30).next_to(ata_result, DOWN)
-        self.play(Write(hint))
+        # --- Dim previous content, show focal element ---
+        self.play(bullets.animate.set_opacity(0.3))
+        detail = Tex(r'E = mc^2').scale(2)
+        detail.move_to(ORIGIN)
+        self.play(Write(detail))
+        self.play(Circumscribe(detail, color=YELLOW))
         self.wait(4)
 
-        # --- Eigenvalues ---
-        eigenvalues = Tex(r"\lambda_1 = 52, \quad \lambda_2 = 13, \quad \lambda_3 = 0")
-        eigenvalues.next_to(hint, DOWN * 2)
-        self.play(Write(eigenvalues))
-        self.wait(4)
-
-        self.play(FadeOut(Group(matrix_a, ata_result, hint, eigenvalues)))
+        self.play(FadeOut(Group(title, bullets, detail)))
 ```
 
-KEY MANIMGL PATTERNS TO USE:
+=== STRICT TYPOGRAPHY & LEGIBILITY RULES ===
+- NEVER display walls of text or paragraphs. Break ALL text into concise bullet
+  points, isolated keywords, or labeled diagram elements.
+- Minimum font sizes (absolute floor — NEVER go below):
+  - Headers / titles: font_size=40 to font_size=48, ALWAYS use weight=BOLD
+  - Body text / bullets: font_size=28 to font_size=36
+  - Small labels / annotations: font_size=24 (absolute minimum)
+- For Tex() objects, use .scale(1.2) or larger. NEVER use .scale() below 0.8.
+- Use weight=BOLD for titles and key terms to create visual hierarchy:
+  Text('Important Term', font_size=36, weight=BOLD)
+- Limit each screen to 5-7 visual elements maximum. If you need more, split
+  across animation steps with FadeOut(Group(...)) between them.
+
+=== SCREEN COMPOSITION & SAFE ZONES ===
+- Edge padding: ALWAYS use buff=0.5 or greater with .to_edge() and .to_corner().
+  - WRONG: title.to_edge(UP) — default buff may cut off on mobile
+  - RIGHT: title.to_edge(UP, buff=0.5) — comfortable padding
+- Split-screen layout pattern: text/bullets on LEFT, visuals/diagrams on RIGHT.
+  - Left column: x around -3.5 to -2.5
+  - Right column: x around 2.5 to 3.5
+  - Vertical divider: Line(UP*3, DOWN*3, color=GREY_B, stroke_width=1).move_to(ORIGIN)
+- Center-stage: for a single focal element, use .move_to(ORIGIN) or .center()
+- Bottom safe zone: avoid placing elements below y = -3.0 (subtitle / UI overlay area).
+- NEVER let elements overlap. Always use .next_to() with explicit buff.
+
+=== COGNITIVE LOAD & FOCUS ANIMATION ===
+- Dimming previous elements: when introducing NEW content, dim everything
+  already on screen to set_opacity(0.3) so the viewer focuses on what is new.
+  self.play(prev_group.animate.set_opacity(0.3))
+  self.play(FadeIn(new_element))
+- To restore previously dimmed content: obj.animate.set_opacity(1.0)
+- Dynamic highlighting — use these timed to narration cues:
+  - Indicate(obj, color=YELLOW, scale_factor=1.1) — brief pulse emphasis
+  - Circumscribe(obj, color=YELLOW, run_time=1.5) — draw shape around it
+  - SurroundingRectangle(obj, color=COLOR, buff=0.2) — persistent highlight box
+  - FlashAround(obj, color=YELLOW) — flash for key moments
+- Progressive reveal: show ONE thing at a time. Never dump everything at once.
+
+=== SUBJECT-SPECIFIC VISUAL ARCHETYPES ===
+Adapt your visual approach based on the content:
+
+HISTORY / LITERATURE / HUMANITIES:
+- Timelines: horizontal Line(LEFT*6, RIGHT*6) with Dot markers at events.
+  Label each dot with Text above or below it.
+- Block quotes: large quotation marks flanking the quote text:
+  open_q = Text('"', font_size=72, color=GREY).to_edge(LEFT, buff=0.5)
+  quote = Text('The actual quote...', font_size=30, slant=ITALIC)
+  close_q = Text('"', font_size=72, color=GREY).next_to(quote, RIGHT)
+- Character/figure profiles: RoundedRectangle card with name, dates, key facts
+
+SCIENCE / BIOLOGY / CHEMISTRY:
+- Radial concept maps: central Circle with radiating Lines to child Circles
+  center = Circle(radius=0.8, color=BLUE, fill_opacity=0.2)
+  child = Circle(radius=0.5, color=GREEN).shift(RIGHT*3)
+  connector = Line(center.get_right(), child.get_left())
+- Process flows: horizontal chain of Rectangle boxes + Arrow connectors
+- Hexagonal structures for chemistry: RegularPolygon(n=6) for rings
+- Color coding: RED=energy/heat, BLUE=cold/water, GREEN=life/growth
+
+MATH / PHYSICS / ENGINEERING:
+- Equations center-stage with step-by-step TransformMatchingTex
+- Graphs: Axes + get_graph with traced dots (Dot + MoveAlongPath)
+- Vector diagrams: NumberPlane + Arrow objects from ORIGIN
+- Matrices: Tex with \begin{bmatrix}...\end{bmatrix}
+
+=== KEY MANIMGL PATTERNS ===
 - `from manimlib import *` and `import numpy as np` at the top
 - One class per file inheriting from `Scene`
-- `Tex(r"...")` for LaTeX math (supports \begin{bmatrix}, \frac, etc.)
+- `Tex(r"...")` for LaTeX math (\begin{bmatrix}, \frac, etc.)
 - `Text("...", font_size=N, color=COLOR)` for plain text
 - `self.play(Write(...))` to animate writing
-- `self.play(ReplacementTransform(old, new))` for morphing between expressions
+- `self.play(ReplacementTransform(old, new))` for morphing between objects
+- `self.play(TransformMatchingTex(old_tex, new_tex))` for smart formula morphs
+- `self.play(TransformMatchingShapes(old, new))` for smart shape morphs
 - `self.play(FadeIn(...))`, `self.play(FadeOut(...))` for appear/disappear
 - `self.play(FadeOut(Group(...)))` to fade out multiple objects at once
-- `.to_edge(UP/DOWN/LEFT/RIGHT)`, `.next_to(obj, DOWN)`, `.shift(UP * 2)`
-- `self.wait(N)` for pauses (use 3-5 seconds for explanation pauses)
+- `.to_edge(UP/DOWN/LEFT/RIGHT, buff=0.5)`, `.next_to(obj, DOWN)`, `.shift(UP*2)`
+- `self.wait(N)` for pauses (3-8 seconds between major steps)
 - `Axes(x_range=[...], y_range=[...])` for graphs
 - `axes.get_graph(func, color=COLOR)` for plotting
 - `ShowCreation(obj)` for drawing shapes/graphs
-- `Indicate(obj, color=YELLOW)` for emphasis
-- `SurroundingRectangle(obj, color=COLOR)` for highlighting
+- `Indicate(obj, color=YELLOW)` for emphasis pulse
+- `Circumscribe(obj, color=YELLOW)` for circling emphasis
+- `FlashAround(obj, color=YELLOW)` for flash emphasis
+- `Wiggle(obj)` for playful attention-drawing
+- `SurroundingRectangle(obj, color=COLOR)` for persistent highlight
 - `VGroup(...)` and `.arrange(DOWN, buff=0.5)` for grouping
 - `Brace(obj, direction)` with `.next_to()` for annotations
+- `LaggedStart(*[FadeIn(item) for item in group], lag_ratio=0.2)` for staggered reveals
+- `obj.animate.set_opacity(0.3)` for dimming previous elements
+- Rate functions: `rush_into`, `rush_from`, `there_and_back`, `smooth`
 
 COLORS: BLUE, RED, GREEN, YELLOW, ORANGE, PURPLE, TEAL, GOLD, MAROON, PINK, WHITE, GREY
 Variants: BLUE_A through BLUE_E, etc.
@@ -126,11 +196,63 @@ FULL LATEX SUPPORT:
 - \quad for spacing
 - \\ for row breaks in matrices
 
+TABLES AND DIAGRAMS — USE THESE INSTEAD OF PLAIN TEXT:
+- For tables, use LaTeX arrays via Tex:
+  Tex(r"\begin{array}{|c|c|c|} \hline x & y & z \\ \hline 1 & 2 & 3 \\ \hline \end{array}").scale(0.8)
+- For labeled diagrams, combine shapes + arrows + text labels:
+  box = Rectangle(width=3, height=1, color=BLUE)
+  label = Text("Input", font_size=28).move_to(box)
+  arrow = Arrow(start=LEFT*2, end=RIGHT*2, color=WHITE)
+  VGroup(box, label).arrange(RIGHT)
+- For flowcharts, use Rectangle + Arrow + Text arranged with .next_to():
+  step1 = VGroup(Rectangle(width=3, height=1, color=BLUE), Text("Step 1", font_size=28))
+  step2 = VGroup(Rectangle(width=3, height=1, color=GREEN), Text("Step 2", font_size=28))
+  arrow = Arrow(step1.get_bottom(), step2.get_top(), color=WHITE)
+- For comparison layouts, use split-screen: left column + divider + right column
+- For bullet-point lists, stack Text objects with .arrange(DOWN, aligned_edge=LEFT, buff=0.4)
+- NEVER just display raw paragraphs of text. Always structure information visually.
+
+STYLE RULES — BLACK BACKGROUND AND FORMAL FONT:
+- The background is BLACK by default in ManimGL — do NOT change it.
+- For ALL Text() objects, use a formal serif font: Text("...", font="serif")
+  This gives a clean, professional look.
+- Use Tex() for all math and formulas — LaTeX renders in Computer Modern by default.
+- Use WHITE or light colors for text so they stand out against the black background.
+- Color palette on black: BLUE, YELLOW, GREEN, TEAL, GOLD for accents. Avoid dark
+  colors that blend into the background.
+
+=== ADVANCED ANIMATION TECHNIQUES ===
+- Mandatory LaggedStart for ALL lists, bullet points, and multi-element reveals:
+  WRONG: self.play(FadeIn(group))
+  WRONG: self.play(*[Write(obj) for obj in objects])
+  RIGHT: self.play(LaggedStart(*[FadeIn(item) for item in group], lag_ratio=0.2))
+- Smart formula transitions — use TransformMatchingTex instead of ReplacementTransform:
+  eq1 = Tex(r'a^2 + b^2')
+  eq2 = Tex(r'c^2')
+  self.play(TransformMatchingTex(eq1, eq2))
+- TransformMatchingShapes for morphing non-LaTeX objects (shapes, diagrams)
+- Action-driven emphasis — match these to narration beats:
+  - "Notice how..." -> Indicate(obj, color=YELLOW)
+  - "This is critical..." -> Circumscribe(obj, color=RED, run_time=1.5)
+  - "Watch this part..." -> FlashAround(obj, color=YELLOW)
+  - "Something unusual..." -> Wiggle(obj)
+- Rate function variety — do NOT use default smooth for every animation:
+  - rush_into: dramatic arrivals (element zooms in fast, slows at destination)
+  - rush_from: dramatic departures (starts slow, accelerates away)
+  - there_and_back: pulsing / breathing effects
+  - smooth: standard easing (use sparingly, NOT as default for everything)
+  Example: self.play(Write(title), rate_func=rush_from, run_time=1.5)
+- Plugin-style visual patterns (use when the topic matches):
+  - Chemistry: hexagonal ring structures via RegularPolygon(n=6)
+  - Computer science: circles for states, curved Arrow for transitions
+  - Tree structures: recursive VGroup arrangements with Line connectors
+
 IMPORTANT RULES:
 1. Always start with `from manimlib import *` — never `from manim import *`
 2. Use `self.wait(3)` to `self.wait(8)` generously between steps for narration time
 3. Use `FadeOut(Group(...))` to clear the screen between major sections
-4. Build animations progressively — show one thing at a time
+4. Build animations progressively — show one thing at a time, dim previous content
+   with set_opacity(0.3), then restore with set_opacity(1.0) when revisiting
 5. Use color deliberately: BLUE=primary, YELLOW=highlight, GREEN=result, RED=emphasis
 6. Keep each scene focused on ONE major concept with 3-6 animation steps
 7. Always escape backslashes properly in raw strings: Tex(r"\frac{1}{2}")
@@ -141,6 +263,10 @@ IMPORTANT RULES:
 9. `Tex()` also does NOT accept `color` as a constructor argument.
    - WRONG: `Tex(r"\frac{1}{2}", color=BLUE)` — THIS WILL CRASH
    - RIGHT: `Tex(r"\frac{1}{2}").set_color(BLUE)` — use `.set_color()` instead
+10. NEVER use font_size below 24 for Text(). NEVER use .scale() below 0.8 for Tex().
+11. ALL .to_edge() calls MUST use buff=0.5 or greater. Never use default buff.
+12. Use LaggedStart with lag_ratio=0.2 for revealing lists — never FadeIn an entire
+    VGroup at once.
 """
 
 
@@ -258,15 +384,18 @@ You MUST write all narration text in the voice and style of this character. \
 Maintain their tone throughout and use catchphrases sparingly — only where they \
 feel natural, not forced into every sentence.
 
-CRITICAL — ANALOGY QUALITY RULES:
-- Draw analogies from SPECIFIC events, relationships, and experiences in the \
-character's Background & Lore above — not just surface-level domain keywords.
-- Every analogy must MAP the educational concept to a concrete story or situation \
-from the character's history.
-- Each scene should have at least one DEEP analogy that connects the concept \
-being taught to a specific narrative moment from the character's background.
-- Avoid generic catchphrase-only references. The analogy should help the student \
-UNDERSTAND the concept better, not just be entertaining.
+CRITICAL — ANALOGY RULES:
+- ALWAYS explain the concept FIRST using proper academic terminology and clear \
+language. The educational content comes first and must stand on its own.
+- AFTER explaining the concept, add a SHORT character-flavored restatement. \
+For example: "So in Krabby Patty terms, think of it like..." or "It's like \
+when I was back in Bikini Bottom..." — one or two sentences MAX.
+- Do NOT replace the real explanation with an analogy. The analogy is a bonus \
+that comes AFTER the real content.
+- Keep analogies brief and light. The focus is the EDUCATION, not the character's \
+backstory. Do not spend multiple sentences diving into character lore.
+- Aim for roughly ONE brief analogy per scene — not every single concept needs \
+a character comparison.
 
 DIFFICULTY LEVEL:
 {difficulty_instruction}
@@ -384,13 +513,14 @@ ManimGL Python code for each scene of an educational video. You will be given \
 the narration script for each scene — your code must produce animations that \
 visually accompany and reinforce what the narrator is saying.
 
-The animations must be of 3Blue1Brown quality — rich, visual, and mathematically \
-precise.
+The animations must be of 3Blue1Brown quality — rich, visual, and highly engaging. \
+Adapt your visual approach to the subject matter (see SUBJECT-SPECIFIC VISUAL \
+ARCHETYPES in the reference below).
 
 You MUST carefully analyze both the source material AND the narration script to \
 understand what concepts are being explained, then write ManimGL code that \
-VISUALLY demonstrates them with proper LaTeX, matrices, graphs, and step-by-step \
-animations.
+VISUALLY demonstrates them with appropriate structures: diagrams, charts, \
+timelines, equations, labeled flowcharts, or whatever best fits the subject.
 
 DIFFICULTY LEVEL (affects visual complexity):
 {difficulty_instruction}

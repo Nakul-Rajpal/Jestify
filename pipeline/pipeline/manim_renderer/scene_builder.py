@@ -312,6 +312,38 @@ class SceneBuilder:
         )
         lines.append("        self.wait(1)")
 
+    @staticmethod
+    def _emit_dim_previous(
+        var_names: list[str],
+        opacity: float,
+        lines: list[str],
+    ) -> None:
+        """Append animation to dim/restore a list of variable names."""
+        if not var_names:
+            return
+        targets = ", ".join(f"{v}.animate.set_opacity({opacity})" for v in var_names)
+        lines.append(f"        self.play({targets}, run_time=0.4)")
+
+    @staticmethod
+    def _emit_tex_safe(
+        var_name: str,
+        latex: str,
+        lines: list[str],
+        *,
+        color: str | None = None,
+        scale: float | None = None,
+        position_suffix: str = "",
+    ) -> None:
+        """Append a Tex() line using .set_color()/.scale() (never constructor args)."""
+        chain = f'        {var_name} = Tex(r"{latex}")'
+        if scale is not None:
+            chain += f".scale({scale})"
+        if color is not None:
+            chain += f".set_color({color})"
+        if position_suffix:
+            chain += position_suffix
+        lines.append(chain)
+
     # ------------------------------------------------------------------ #
     # Template builders — each returns (class_name, full_source_code)
     # ------------------------------------------------------------------ #
@@ -823,9 +855,8 @@ class SceneBuilder:
     def _build_concept_reveal(
         self, params: dict, scene_index: int
     ) -> tuple[str, str]:
-        """Visual concept cards with coloured rounded-rect backgrounds,
-        staggered fade-in, and emphasis animation.  Replaces plain
-        bullet-point 'text' scenes."""
+        """Concept cards with per-card reveal and dimming of previous cards
+        to focus attention on the active item."""
         class_name = f"ConceptRevealScene{scene_index}"
 
         title = params.get("title", "")
@@ -861,11 +892,11 @@ class SceneBuilder:
             lines.append(f"        # Concept {i}")
             lines.append(
                 f"        cbox{i} = RoundedRectangle("
-                f"corner_radius=0.2, width=5, height=0.9, "
+                f"corner_radius=0.2, width=6, height=1.0, "
                 f"color={col}, fill_opacity=0.12)"
             )
             lines.append(
-                f'        ctxt{i} = Text("{safe_text}", font_size=28, color={col})'
+                f'        ctxt{i} = Text("{safe_text}", font_size=30, color={col})'
             )
             lines.append(f"        ctxt{i}.move_to(cbox{i})")
             lines.append(f"        c{i} = VGroup(cbox{i}, ctxt{i})")
@@ -887,10 +918,28 @@ class SceneBuilder:
         if title:
             lines.append("        concepts.shift(DOWN * 0.3)")
 
-        lines.append(
-            "        self.play(LaggedStartMap(FadeIn, concepts, lag_ratio=0.3), run_time=2)"
-        )
-        lines.append("        self.wait(2)")
+        # Reveal concepts one at a time, dimming previous cards
+        num_concepts = len(concepts)
+        for i in range(num_concepts):
+            if i == 0:
+                lines.append(
+                    f"        self.play(FadeIn(c0, shift=UP*0.3), run_time=0.6)"
+                )
+            else:
+                self._emit_dim_previous(
+                    [f"c{j}" for j in range(i)], 0.3, lines
+                )
+                lines.append(
+                    f"        self.play(FadeIn(c{i}, shift=UP*0.3), run_time=0.6)"
+                )
+            lines.append("        self.wait(1.5)")
+
+        # Restore full opacity on all cards
+        if num_concepts > 1:
+            self._emit_dim_previous(
+                [f"c{j}" for j in range(num_concepts)], 1.0, lines
+            )
+            lines.append("        self.wait(1)")
 
         # Emphasis
         for idx in emphasis_indices:
@@ -1031,7 +1080,7 @@ class SceneBuilder:
             if lbl:
                 safe_lbl = self._safe_tex(lbl)
                 lines.append(
-                    f'        vlbl{i} = Tex(r"{safe_lbl}", color={col})'
+                    f'        vlbl{i} = Tex(r"{safe_lbl}").set_color({col})'
                     f".next_to(vec{i}.get_end(), UP, buff=0.15)"
                 )
                 lines.append(f"        self.play(FadeIn(vlbl{i}))")
@@ -1079,8 +1128,8 @@ class SceneBuilder:
     def _build_comparison(
         self, params: dict, scene_index: int
     ) -> tuple[str, str]:
-        """Side-by-side comparison of two mathematical objects/concepts
-        with a connecting symbol."""
+        """Split-screen comparison with a vertical dividing line, dimming
+        logic, and safe-zone-compliant spacing."""
         class_name = f"ComparisonScene{scene_index}"
 
         title = params.get("title", "")
@@ -1094,12 +1143,13 @@ class SceneBuilder:
             col = self._col(data.get("color", "BLUE"))
 
             ls.append(
-                f'        {prefix}_label = Text("{lbl}", font_size=30, '
-                f"color={col}).move_to([{x_pos}, 1.5, 0])"
+                f'        {prefix}_label = Text("{lbl}", font_size=34, '
+                f"weight=BOLD, color={col}).move_to([{x_pos}, 2.0, 0])"
             )
-            ls.append(
-                f'        {prefix}_tex = Tex(r"{tex}", color={col})'
-                f".move_to([{x_pos}, 0, 0])"
+            self._emit_tex_safe(
+                f"{prefix}_tex", tex, ls,
+                color=col,
+                position_suffix=f".move_to([{x_pos}, 0.5, 0])",
             )
             ls.append(
                 f"        {prefix}_box = SurroundingRectangle("
@@ -1115,13 +1165,21 @@ class SceneBuilder:
 
         self._emit_title(title, lines)
 
-        _side("left", left, -3.5, lines)
-        _side("right", right, 3.5, lines)
+        # Vertical dividing line
+        lines.append(
+            "        divider = Line(UP*2.5, DOWN*2.5, "
+            "color=GREY_B, stroke_width=1).move_to(ORIGIN)"
+        )
+
+        _side("left", left, -3.2, lines)
+        _side("right", right, 3.2, lines)
 
         # Connector
         safe_conn = self._safe_tex(connector)
-        lines.append(
-            f'        conn = Tex(r"{safe_conn}", font_size=48).move_to(ORIGIN)'
+        self._emit_tex_safe(
+            "conn", safe_conn, lines,
+            scale=1.8,
+            position_suffix=".move_to([0, -1.0, 0])",
         )
 
         # Animate left side
@@ -1130,6 +1188,15 @@ class SceneBuilder:
         )
         lines.append("        self.play(ShowCreation(left_box))")
         lines.append("        self.wait(2)")
+
+        # Draw divider
+        lines.append("        self.play(ShowCreation(divider), run_time=0.5)")
+        lines.append("        self.wait(0.5)")
+
+        # Dim left side to focus on right
+        self._emit_dim_previous(
+            ["left_label", "left_tex", "left_box"], 0.3, lines
+        )
 
         # Connector
         lines.append("        self.play(Write(conn))")
@@ -1140,6 +1207,12 @@ class SceneBuilder:
             "        self.play(FadeIn(right_label), Write(right_tex), run_time=1)"
         )
         lines.append("        self.play(ShowCreation(right_box))")
+        lines.append("        self.wait(2)")
+
+        # Restore left side for final view
+        self._emit_dim_previous(
+            ["left_label", "left_tex", "left_box"], 1.0, lines
+        )
 
         self._emit_camera_focus("conn", 8, lines)
         lines.append("        self.wait(1)")
@@ -1183,7 +1256,7 @@ class SceneBuilder:
                 f"        dot{i} = Dot(radius=0.06, color={col})"
             )
             lines.append(
-                f'        itex{i} = Tex(r"{tex}", color={col})'
+                f'        itex{i} = Tex(r"{tex}").set_color({col})'
             )
             if lbl:
                 lines.append(
