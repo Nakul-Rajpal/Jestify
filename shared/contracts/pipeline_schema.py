@@ -25,6 +25,7 @@ class GeneratedScript(BaseModel):
     scenes: List[SceneInstruction]
     intro_text: str
     outro_text: str
+    language: str = "en"
 
 
 class PipelineInput(BaseModel):

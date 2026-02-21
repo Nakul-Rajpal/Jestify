@@ -1,33 +1,49 @@
-"""Voice synthesiser -- PLACEHOLDER implementation.
+"""Voice synthesiser using macOS ``say`` command or edge-tts.
 
-The real implementation will use Qwen3-TTS with voice cloning from
-per-character reference audio clips.  For now this module generates
-silent WAV files with an estimated duration so that the rest of the
-pipeline can be tested end-to-end.
+Generates real speech audio from narration text.  Falls back to a
+silent WAV only if no TTS backend is available.
 """
 
 import logging
-import struct
+import platform
+import shutil
+import subprocess
+import tempfile
 import wave
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# Rough estimate: 150 words per minute for narration speed.
 _WORDS_PER_MINUTE = 150
 
 
 class VoiceSynthesizer:
-    """Placeholder text-to-speech synthesiser.
+    """Text-to-speech synthesiser with automatic backend selection.
 
-    TODO: Replace with Qwen3-TTS integration.
-    The real implementation will:
-        1. Load the character's reference audio clip and transcript
-           from ``voice_profiles.CHARACTER_VOICE_PROFILES``.
-        2. Use Qwen3-TTS voice cloning to synthesize the narration
-           text in the character's voice.
-        3. Write the output as a WAV/MP3 to *output_path*.
+    Backends (tried in order):
+    1. **edge-tts** — high-quality Microsoft neural voices (pip install edge-tts)
+    2. **macOS say** — built-in on macOS, decent quality, zero dependencies
+    3. **silent fallback** — generates a silent WAV when nothing else works
     """
+
+    def __init__(self) -> None:
+        self._backend = self._detect_backend()
+        logger.info("VoiceSynthesizer using backend: %s", self._backend)
+
+    @staticmethod
+    def _detect_backend() -> str:
+        # Check edge-tts first (best quality)
+        try:
+            import edge_tts  # noqa: F401
+            return "edge-tts"
+        except ImportError:
+            pass
+
+        # macOS say command
+        if platform.system() == "Darwin" and shutil.which("say"):
+            return "macos-say"
+
+        return "silent"
 
     def synthesize(
         self,
@@ -35,46 +51,105 @@ class VoiceSynthesizer:
         character_id: str,
         output_path: str,
     ) -> str:
-        """Synthesize speech for *text* and write to *output_path*.
-
-        Parameters
-        ----------
-        text : str
-            Narration text to speak.
-        character_id : str
-            Character identifier (e.g. ``"spongebob"``).  Will be used
-            to select the voice profile once Qwen3-TTS is integrated.
-        output_path : str
-            Destination file path for the generated audio.
-
-        Returns
-        -------
-        str
-            The absolute path to the output audio file.
-        """
-        duration = self._estimate_duration(text)
-        logger.info(
-            "PLACEHOLDER: generating %0.1fs silent WAV for character '%s' -> %s",
-            duration,
-            character_id,
-            output_path,
-        )
-
+        """Synthesize speech for *text* and write a WAV to *output_path*."""
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-        self._write_silent_wav(output_path, duration)
 
+        if self._backend == "edge-tts":
+            self._synthesize_edge_tts(text, character_id, output_path)
+        elif self._backend == "macos-say":
+            self._synthesize_macos_say(text, output_path)
+        else:
+            logger.warning("No TTS backend available — generating silent WAV")
+            duration = self._estimate_duration(text)
+            self._write_silent_wav(output_path, duration)
+
+        logger.info("Voice synthesized: %s (%s)", output_path, self._backend)
         return str(Path(output_path).resolve())
 
     # ------------------------------------------------------------------ #
-    # Internals
+    # Backend: edge-tts (best quality)
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _synthesize_edge_tts(text: str, character_id: str, output_path: str) -> None:
+        import asyncio
+        import edge_tts
+
+        # Map characters to fitting voices
+        voice_map = {
+            "spongebob": "en-US-GuyNeural",
+            "superman": "en-US-ChristopherNeural",
+            "einstein": "en-GB-RyanNeural",
+            "pirate": "en-AU-WilliamNeural",
+        }
+        voice = voice_map.get(character_id, "en-US-GuyNeural")
+
+        async def _run():
+            communicate = edge_tts.Communicate(text, voice)
+            # edge-tts outputs MP3; save to temp then convert to WAV
+            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+                tmp_mp3 = tmp.name
+            await communicate.save(tmp_mp3)
+
+            # Convert MP3 to WAV with ffmpeg
+            cmd = [
+                "ffmpeg", "-y", "-i", tmp_mp3,
+                "-ar", "22050", "-ac", "1",
+                output_path,
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            Path(tmp_mp3).unlink(missing_ok=True)
+            if result.returncode != 0:
+                raise RuntimeError(f"ffmpeg MP3→WAV failed: {result.stderr[:500]}")
+
+        asyncio.run(_run())
+
+    # ------------------------------------------------------------------ #
+    # Backend: macOS say command
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _synthesize_macos_say(text: str, output_path: str) -> None:
+        # say outputs AIFF; we convert to WAV via ffmpeg
+        with tempfile.NamedTemporaryFile(suffix=".aiff", delete=False) as tmp:
+            tmp_aiff = tmp.name
+
+        # Use a decent macOS voice — "Samantha" is clear and widely available
+        cmd_say = [
+            "say",
+            "-v", "Samantha",
+            "-r", "170",        # words per minute (natural pace)
+            "-o", tmp_aiff,
+            text,
+        ]
+
+        logger.info("Running: say -v Samantha -r 170 -o %s ...", tmp_aiff)
+        result = subprocess.run(cmd_say, capture_output=True, text=True, timeout=120)
+        if result.returncode != 0:
+            logger.error("say failed: %s", result.stderr)
+            raise RuntimeError(f"macOS say failed: {result.stderr[:500]}")
+
+        # Convert AIFF to WAV
+        cmd_ffmpeg = [
+            "ffmpeg", "-y", "-i", tmp_aiff,
+            "-ar", "22050", "-ac", "1",
+            output_path,
+        ]
+        result = subprocess.run(cmd_ffmpeg, capture_output=True, text=True, timeout=30)
+        Path(tmp_aiff).unlink(missing_ok=True)
+
+        if result.returncode != 0:
+            logger.error("ffmpeg AIFF→WAV failed: %s", result.stderr)
+            raise RuntimeError(f"ffmpeg AIFF→WAV failed: {result.stderr[:500]}")
+
+    # ------------------------------------------------------------------ #
+    # Fallback: silent WAV
     # ------------------------------------------------------------------ #
 
     @staticmethod
     def _estimate_duration(text: str) -> float:
-        """Estimate audio duration from word count."""
         word_count = len(text.split())
-        duration = (word_count / _WORDS_PER_MINUTE) * 60.0
-        return max(duration, 1.0)  # minimum 1 second
+        return max((word_count / _WORDS_PER_MINUTE) * 60.0, 1.0)
 
     @staticmethod
     def _write_silent_wav(
@@ -84,10 +159,8 @@ class VoiceSynthesizer:
         channels: int = 1,
         sample_width: int = 2,
     ) -> None:
-        """Write a silent (zero-filled) WAV file."""
         num_frames = int(sample_rate * duration_seconds)
         silent_data = b"\x00" * (num_frames * channels * sample_width)
-
         with wave.open(path, "wb") as wf:
             wf.setnchannels(channels)
             wf.setsampwidth(sample_width)

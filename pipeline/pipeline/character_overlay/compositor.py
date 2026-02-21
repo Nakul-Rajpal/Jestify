@@ -55,9 +55,12 @@ class CharacterCompositor:
 
         if sprite.exists():
             # Full composite: overlay sprite + mix audio
+            # Pad audio with silence to match video length so the full
+            # animation plays (narration at the start, then silence).
             filter_complex = (
                 f"[1:v]scale=iw*{scale}:ih*{scale}[sprite];"
-                f"[0:v][sprite]overlay={overlay_pos}[vout]"
+                f"[0:v][sprite]overlay={overlay_pos}[vout];"
+                f"[2:a]apad[aout]"
             )
             cmd = [
                 "ffmpeg", "-y",
@@ -66,7 +69,7 @@ class CharacterCompositor:
                 "-i", audio_file,
                 "-filter_complex", filter_complex,
                 "-map", "[vout]",
-                "-map", "2:a",
+                "-map", "[aout]",
                 "-c:v", "libx264",
                 "-preset", "fast",
                 "-c:a", "aac",
@@ -75,15 +78,15 @@ class CharacterCompositor:
                 output_path,
             ]
         else:
-            # No sprite available -- just mix audio into the animation clip
-            logger.warning(
-                "Character sprite not found at %s -- mixing audio only",
-                character_sprite,
-            )
+            # No sprite available -- just mix audio into the animation clip.
+            # Pad audio with silence to match video length.
             cmd = [
                 "ffmpeg", "-y",
                 "-i", animation_clip,
                 "-i", audio_file,
+                "-filter_complex", "[1:a]apad[aout]",
+                "-map", "0:v",
+                "-map", "[aout]",
                 "-c:v", "copy",
                 "-c:a", "aac",
                 "-b:a", "192k",

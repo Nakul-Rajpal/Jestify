@@ -70,26 +70,35 @@ class PipelineOrchestrator:
             # ---- Stage 1: ManimGL rendering ------------------------------ #
             logger.info("[orchestrator] === STAGE 1: ManimGL Rendering ===")
             self._on_progress(JobStatus.RENDERING_ANIMATIONS, 0)
-            animation_clips: list[str] = []
+
+            # Track succeeded scenes so failed ones are skipped gracefully.
+            rendered: list[tuple[SceneInstruction, str]] = []
             for idx, scene in enumerate(scenes):
                 logger.info("[orchestrator] Rendering scene %d/%d (type: %s)", idx + 1, total_scenes, scene.manim_scene_type)
                 try:
                     clip_path = self._render_scene(scene, tmp, idx)
-                    animation_clips.append(clip_path)
+                    rendered.append((scene, clip_path))
                     logger.info("[orchestrator] Scene %d rendered: %s", idx + 1, clip_path)
                 except Exception as e:
-                    logger.error("[orchestrator] Scene %d FAILED: %s", idx + 1, str(e))
-                    raise
+                    logger.error("[orchestrator] Scene %d FAILED (skipping): %s", idx + 1, str(e))
                 pct = int(((idx + 1) / total_scenes) * 25)
                 self._on_progress(JobStatus.RENDERING_ANIMATIONS, pct)
+
+            if not rendered:
+                raise RuntimeError("All scenes failed to render")
+
+            logger.info(
+                "[orchestrator] %d/%d scenes rendered successfully",
+                len(rendered), total_scenes,
+            )
 
             # ---- Stage 2: Voice synthesis -------------------------------- #
             logger.info("[orchestrator] === STAGE 2: Voice Synthesis ===")
             self._on_progress(JobStatus.SYNTHESIZING_VOICE, 25)
             audio_clips: list[str] = []
-            for idx, scene in enumerate(scenes):
+            for idx, (scene, _clip) in enumerate(rendered):
                 audio_path = str(tmp / f"voice_{idx:03d}.wav")
-                logger.info("[orchestrator] Synthesizing voice %d/%d (%d chars of text)", idx + 1, total_scenes, len(scene.narration_text))
+                logger.info("[orchestrator] Synthesizing voice %d/%d (%d chars of text)", idx + 1, len(rendered), len(scene.narration_text))
                 self._voice_synth.synthesize(
                     text=scene.narration_text,
                     character_id=character.value,
@@ -97,26 +106,26 @@ class PipelineOrchestrator:
                 )
                 audio_clips.append(audio_path)
                 logger.info("[orchestrator] Voice %d synthesized: %s", idx + 1, audio_path)
-                pct = 25 + int(((idx + 1) / total_scenes) * 25)
+                pct = 25 + int(((idx + 1) / len(rendered)) * 25)
                 self._on_progress(JobStatus.SYNTHESIZING_VOICE, pct)
 
             # ---- Stage 3: Character overlay compositing ------------------ #
             logger.info("[orchestrator] === STAGE 3: Character Overlay ===")
             self._on_progress(JobStatus.COMPOSITING, 50)
             composited_clips: list[str] = []
-            for idx, scene in enumerate(scenes):
+            for idx, (scene, anim_clip) in enumerate(rendered):
                 sprite_path = get_sprite_path(character.value, scene.character_action)
                 composited_path = str(tmp / f"composited_{idx:03d}.mp4")
-                logger.info("[orchestrator] Compositing scene %d/%d (sprite: %s)", idx + 1, total_scenes, sprite_path)
+                logger.info("[orchestrator] Compositing scene %d/%d (sprite: %s)", idx + 1, len(rendered), sprite_path)
                 self._compositor.composite(
-                    animation_clip=animation_clips[idx],
+                    animation_clip=anim_clip,
                     character_sprite=sprite_path,
                     audio_file=audio_clips[idx],
                     output_path=composited_path,
                 )
                 composited_clips.append(composited_path)
                 logger.info("[orchestrator] Scene %d composited: %s", idx + 1, composited_path)
-                pct = 50 + int(((idx + 1) / total_scenes) * 25)
+                pct = 50 + int(((idx + 1) / len(rendered)) * 25)
                 self._on_progress(JobStatus.COMPOSITING, pct)
 
             # ---- Stage 4: Final assembly --------------------------------- #
@@ -140,7 +149,7 @@ class PipelineOrchestrator:
                 logger.info("[orchestrator] Final video duration: %.1f seconds", duration)
             except Exception as e:
                 logger.warning("[orchestrator] Could not get video duration: %s", e)
-                duration = sum(s.duration_hint_seconds for s in scenes)
+                duration = sum(s.duration_hint_seconds for s, _ in rendered)
                 logger.info("[orchestrator] Using estimated duration: %.1f seconds", duration)
 
         self._on_progress(JobStatus.COMPLETED, 100)
