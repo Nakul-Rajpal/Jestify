@@ -24,6 +24,7 @@ celery_app.conf.update(
     # Task routing
     task_routes={
         "backend.app.tasks.video_task.generate_video_task": {"queue": "video_pipeline"},
+        "backend.app.tasks.classify_task.classify_video_task": {"queue": "celery"},
     },
 
     # Task behavior

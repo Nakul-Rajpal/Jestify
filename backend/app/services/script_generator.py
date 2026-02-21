@@ -1,8 +1,7 @@
 """Service for generating educational scripts using the Anthropic Claude API.
 
-Scene types are designed for 3Blue1Brown-quality ManimGL animations.
-The LLM must analyze the source material and create graphs, equations,
-and visual content that directly explain the material.
+Claude generates complete ManimGL Python code for each scene, producing
+3Blue1Brown-quality animations with full LaTeX support (bmatrix, align, etc.).
 """
 
 import json
@@ -45,183 +44,102 @@ DIFFICULTY_INSTRUCTIONS: dict[Difficulty, str] = {
 }
 
 # -------------------------------------------------------------------- #
-# Available ManimGL scene types — 10 types
+# ManimGL code generation reference
 # -------------------------------------------------------------------- #
 
-AVAILABLE_SCENE_TYPES = """\
-Available ManimGL scene types (10 types). Choose the most visual one for each concept.
-You MUST use "graph" scenes when the material involves any functions, data, or \
-quantitative relationships. Graphs are the most important visual tool.
+MANIMGL_REFERENCE = r"""
+You write complete ManimGL Python code for each scene. Each scene is a standalone
+Python file with one Scene class. The code will be executed by ManimGL to render
+an animation clip.
 
-1. "equation" — Step-by-step LaTeX equation transforms with colour highlighting and annotations.
-   Parameters:
-   {
-     "steps": ["x^2 + 1", "x^2 + 1 = 0", "x^2 = -1"],
-     "title": "Solving the Quadratic Equation",
-     "color_map": {"x^2": "YELLOW", "-1": "RED"},
-     "highlight_steps": [1],
-     "annotations": [{"target_tex": "x^2", "text": "squared variable", "direction": "UP"}]
-   }
-   Use for: derivations, proofs, algebraic manipulation.
+EXAMPLE OF HIGH-QUALITY MANIMGL CODE:
 
-2. "graph" — Function plotting with area shading, tangent lines, tracing dots, and overlays.
-   THIS IS THE MOST IMPORTANT SCENE TYPE. Use it whenever the material involves functions,
-   data trends, rates of change, optimization, or any quantitative relationship.
-   Parameters:
-   {
-     "func_str": "x**2",
-     "x_range": [-5, 5, 1], "y_range": [0, 25, 5],
-     "title": "The Parabola and Its Derivative",
-     "color": "BLUE",
-     "show_area": {"x_min": 0, "x_max": 3, "color": "BLUE_E", "opacity": 0.3},
-     "show_tangent": {"x_value": 2, "color": "YELLOW"},
-     "trace_dot": true,
-     "label": "f(x) = x^2",
-     "secondary_funcs": [{"func_str": "2*x", "color": "GREEN", "label": "f'(x) = 2x"}]
-   }
-   IMPORTANT: func_str must be valid Python using x as the variable. Use ** for powers,
-   np.sin/np.cos/np.exp/np.log for math functions. Examples:
-   - "x**2 - 3*x + 2"
-   - "np.sin(x)"
-   - "np.exp(-x**2)"
-   - "1 / (1 + np.exp(-x))"
+```python
+from manimlib import *
+import numpy as np
 
-3. "diagram" — Nodes inside coloured boxes connected by labelled arrows.
-   Parameters:
-   {
-     "nodes": [
-       {"label": "Input", "position": [-4, 0], "color": "BLUE"},
-       {"label": "Process", "position": [0, 0], "color": "GREEN"},
-       {"label": "Output", "position": [4, 0], "color": "RED"}
-     ],
-     "edges": [[0, 1], [1, 2]],
-     "edge_labels": ["data", "result"]
-   }
-   Use for: flowcharts, process diagrams, system architecture.
+class SVDDecomposition(Scene):
+    def construct(self):
+        # --- Title ---
+        title = Text("Singular Value Decomposition", font_size=48, color=BLUE)
+        subtitle = Text("Finding U, Sigma, and V", font_size=36).next_to(title, DOWN)
+        self.play(Write(title), FadeIn(subtitle, UP))
+        self.wait(3)
+        self.play(FadeOut(title), FadeOut(subtitle))
 
-4. "concept_reveal" — Visual concept cards with coloured boxes and emphasis animations.
-   Parameters:
-   {
-     "title": "Key Concepts",
-     "concepts": [
-       {"text": "Derivative", "color": "BLUE", "emphasis": true},
-       {"text": "Integral", "color": "GREEN", "emphasis": false},
-       {"text": "Limit", "color": "YELLOW", "emphasis": false}
-     ],
-     "arrangement": "vertical"
-   }
-   arrangement options: "vertical", "horizontal", "grid"
-   Use for: introducing key terms, listing properties, definitions. ALWAYS use this instead of "text".
+        # --- Show the matrix ---
+        matrix_a = Tex(r"A = \begin{bmatrix} 0 & 4 & 3 \\ 0 & -6 & 2 \end{bmatrix}")
+        matrix_a.to_edge(UP)
+        self.play(Write(matrix_a))
+        self.wait(4)
 
-5. "geometry" — Geometric shapes with labels, fill, and staggered construction animation.
-   Parameters:
-   {
-     "shapes": [
-       {"type": "circle", "radius": 2.0, "color": "BLUE", "position": [0, 0], "fill_opacity": 0.2, "label": "r = 2"},
-       {"type": "line", "start": [0, 0], "end": [2, 0], "color": "YELLOW", "label": "radius"}
-     ],
-     "title": "Circle Construction"
-   }
-   Shape types: circle, square, triangle, line.
-   Use for: geometric proofs, shape properties, spatial reasoning.
+        # --- Compute A^T A ---
+        ata_text = Tex(r"A^T A = \begin{bmatrix} 0 & 0 \\ 4 & -6 \\ 3 & 2 \end{bmatrix} \begin{bmatrix} 0 & 4 & 3 \\ 0 & -6 & 2 \end{bmatrix}")
+        ata_result = Tex(r"A^T A = \begin{bmatrix} 0 & 0 & 0 \\ 0 & 52 & 0 \\ 0 & 0 & 13 \end{bmatrix}")
 
-6. "number_line" — Animated number line with labelled points, shaded intervals, and travelling dot.
-   Parameters:
-   {
-     "title": "The Number Line",
-     "range": [-5, 5, 1],
-     "points": [
-       {"value": 2, "label": "a = 2", "color": "YELLOW"},
-       {"value": -1, "label": "b = -1", "color": "RED"}
-     ],
-     "intervals": [
-       {"start": -1, "end": 2, "color": "GREEN", "label": "interval"}
-     ],
-     "animate_dot": {"from": -3, "to": 3, "color": "WHITE"}
-   }
-   Use for: inequalities, intervals, limits, sequences.
+        self.play(Write(ata_text))
+        self.wait(5)
+        self.play(ReplacementTransform(ata_text, ata_result))
 
-7. "coordinate_plane" — 2D grid with vectors, points, and parametric curves.
-   Parameters:
-   {
-     "title": "Coordinate System",
-     "x_range": [-5, 5, 1], "y_range": [-5, 5, 1],
-     "vectors": [
-       {"end": [3, 2], "color": "YELLOW", "label": "\\vec{v}"}
-     ],
-     "points": [
-       {"position": [1, 1], "label": "P(1,1)", "color": "RED"}
-     ],
-     "parametric_curve": {
-       "func": "lambda t: [np.cos(t), np.sin(t), 0]",
-       "t_range": [0, 6.28],
-       "color": "BLUE"
-     }
-   }
-   Use for: vectors, linear algebra, parametric equations, coordinate geometry.
+        hint = Text("It's a diagonal matrix!", color=YELLOW, font_size=30).next_to(ata_result, DOWN)
+        self.play(Write(hint))
+        self.wait(4)
 
-8. "comparison" — Side-by-side layout comparing two mathematical objects with a connector.
-   Parameters:
-   {
-     "title": "Comparison",
-     "left": {"label": "Before", "content_tex": "\\int_0^1 x\\,dx", "color": "BLUE"},
-     "right": {"label": "After", "content_tex": "\\frac{1}{2}", "color": "GREEN"},
-     "connector": "\\Rightarrow"
-   }
-   Use for: before/after transformations, equivalent expressions, method comparison.
+        # --- Eigenvalues ---
+        eigenvalues = Tex(r"\lambda_1 = 52, \quad \lambda_2 = 13, \quad \lambda_3 = 0")
+        eigenvalues.next_to(hint, DOWN * 2)
+        self.play(Write(eigenvalues))
+        self.wait(4)
 
-9. "summary" — End-of-video recap with key results and emphasis animation.
-   Parameters:
-   {
-     "title": "Summary",
-     "items": [
-       {"tex": "f(x) = x^2", "label": "Quadratic function", "color": "BLUE"},
-       {"tex": "f'(x) = 2x", "label": "Derivative", "color": "GREEN"},
-       {"tex": "\\int_0^1 x^2\\,dx = \\frac{1}{3}", "label": "Integral", "color": "YELLOW"}
-     ]
-   }
-   Use for: the LAST scene of every video — always end with a summary.
+        self.play(FadeOut(Group(matrix_a, ata_result, hint, eigenvalues)))
+```
 
-IMPORTANT — NEVER use "text" as a scene type. Use "concept_reveal" instead.
-Valid values: equation, graph, diagram, concept_reveal, geometry, number_line, \
-coordinate_plane, comparison, summary.
-"""
+KEY MANIMGL PATTERNS TO USE:
+- `from manimlib import *` and `import numpy as np` at the top
+- One class per file inheriting from `Scene`
+- `Tex(r"...")` for LaTeX math (supports \begin{bmatrix}, \frac, etc.)
+- `Text("...", font_size=N, color=COLOR)` for plain text
+- `self.play(Write(...))` to animate writing
+- `self.play(ReplacementTransform(old, new))` for morphing between expressions
+- `self.play(FadeIn(...))`, `self.play(FadeOut(...))` for appear/disappear
+- `self.play(FadeOut(Group(...)))` to fade out multiple objects at once
+- `.to_edge(UP/DOWN/LEFT/RIGHT)`, `.next_to(obj, DOWN)`, `.shift(UP * 2)`
+- `self.wait(N)` for pauses (use 3-5 seconds for explanation pauses)
+- `Axes(x_range=[...], y_range=[...])` for graphs
+- `axes.get_graph(func, color=COLOR)` for plotting
+- `ShowCreation(obj)` for drawing shapes/graphs
+- `Indicate(obj, color=YELLOW)` for emphasis
+- `SurroundingRectangle(obj, color=COLOR)` for highlighting
+- `VGroup(...)` and `.arrange(DOWN, buff=0.5)` for grouping
+- `Brace(obj, direction)` with `.next_to()` for annotations
 
-# -------------------------------------------------------------------- #
-# Scene composition guidelines (3B1B quality)
-# -------------------------------------------------------------------- #
+COLORS: BLUE, RED, GREEN, YELLOW, ORANGE, PURPLE, TEAL, GOLD, MAROON, PINK, WHITE, GREY
+Variants: BLUE_A through BLUE_E, etc.
 
-SCENE_COMPOSITION_GUIDELINES = """\
-ANIMATION QUALITY GUIDELINES — follow strictly:
+FULL LATEX SUPPORT:
+- \begin{bmatrix}...\end{bmatrix} for matrices
+- \begin{pmatrix}...\end{pmatrix} for parenthesized matrices
+- \frac{a}{b}, \sum_{n=1}^{N}, \int_a^b, \sqrt{x}
+- \lambda, \sigma, \vec{v}, \hat{x}, \bar{x}
+- \text{...} for text within math
+- \quad for spacing
+- \\ for row breaks in matrices
 
-1. NEVER use plain bullet points or text-only scenes. Every concept MUST be visualized
-   with mathematical objects, shapes, graphs, or coloured concept cards.
-2. ANALYZE THE SOURCE MATERIAL CAREFULLY. Identify:
-   - What mathematical functions or relationships are described
-   - What types of problems are being solved
-   - What graphs would help explain the concepts
-   Then CREATE GRAPH SCENES that directly visualize these relationships.
-3. AT LEAST ONE SCENE MUST BE A "graph" TYPE with actual mathematical functions
-   from the source material. If the material covers:
-   - Calculus: plot the function AND its derivative using secondary_funcs
-   - Algebra: plot the equation to show its roots/behavior
-   - Statistics: plot the distribution or trend
-   - Physics: plot the relationship (distance-time, force-displacement, etc.)
-   - Economics: plot supply/demand, cost functions, etc.
-4. For mathematical derivations: use "equation" with color_map to highlight the parts
-   that change between steps, and annotations to explain what terms mean.
-5. For function analysis: use "graph" with show_area, show_tangent, or trace_dot
-   to bring the function to life — do not just plot a static curve.
-6. For introducing concepts: use "concept_reveal" with coloured boxes and emphasis.
-7. For the LAST scene of every video: use "summary" to recap key results visually.
-8. Each scene should have ONE clear visual focus.
-9. Use colour deliberately:
-   - BLUE for primary functions and concepts
-   - YELLOW for highlights, emphasis, and tangent lines
-   - GREEN for secondary elements, derivatives, and results
-   - RED for warnings, constraints, negative values
-10. Scene flow should build progressively:
-    concept_reveal (introduce) → equation (derive) → graph (visualize) → summary (recap).
+IMPORTANT RULES:
+1. Always start with `from manimlib import *` — never `from manim import *`
+2. Use `self.wait(3)` to `self.wait(8)` generously between steps for narration time
+3. Use `FadeOut(Group(...))` to clear the screen between major sections
+4. Build animations progressively — show one thing at a time
+5. Use color deliberately: BLUE=primary, YELLOW=highlight, GREEN=result, RED=emphasis
+6. Keep each scene focused on ONE major concept with 3-6 animation steps
+7. Always escape backslashes properly in raw strings: Tex(r"\frac{1}{2}")
+8. CRITICAL: `Tex()` does NOT accept `font_size`. Only `Text()` accepts `font_size`.
+   - WRONG: `Tex(r"\frac{1}{2}", font_size=40)` — THIS WILL CRASH
+   - RIGHT: `Tex(r"\frac{1}{2}").scale(1.5)` — use `.scale()` for Tex sizing
+   - RIGHT: `Text("Hello", font_size=40)` — font_size is only for Text
+9. `Tex()` also does NOT accept `color` as a constructor argument.
+   - WRONG: `Tex(r"\frac{1}{2}", color=BLUE)` — THIS WILL CRASH
+   - RIGHT: `Tex(r"\frac{1}{2}").set_color(BLUE)` — use `.set_color()` instead
 """
 
 
@@ -254,7 +172,7 @@ class ScriptGenerator:
 
         response = self.client.messages.create(
             model=CLAUDE_MODEL,
-            max_tokens=8192,
+            max_tokens=16384,
             system=system_prompt,
             messages=[{"role": "user", "content": user_message}],
         )
@@ -269,16 +187,16 @@ class ScriptGenerator:
         return GeneratedScript(**script_data)
 
     def _build_system_prompt(self, personality, difficulty_instruction: str) -> str:
-        """Build the system prompt for 3B1B-quality script generation."""
+        """Build the system prompt for direct ManimGL code generation."""
         return f"""\
-You are an educational content script writer. Your job is to create engaging, \
-educational video scripts that will be animated using ManimGL (a math animation \
-library). The animations must be of 3Blue1Brown quality — rich, visual, and \
-mathematically precise.
+You are an educational content script writer and ManimGL programmer. Your job is \
+to create engaging educational video scripts with complete, runnable ManimGL Python \
+code for each scene. The animations must be of 3Blue1Brown quality — rich, visual, \
+and mathematically precise.
 
 You MUST carefully analyze the source material to understand what mathematical \
-concepts, functions, and relationships it contains, then create scenes that \
-VISUALLY explain them with graphs, equations, and animations — NOT just text.
+concepts, functions, and relationships it contains, then write ManimGL code that \
+VISUALLY explains them with proper LaTeX, matrices, graphs, and step-by-step animations.
 
 CHARACTER PERSONA:
 - Name: {personality.display_name}
@@ -286,71 +204,79 @@ CHARACTER PERSONA:
 - Analogy Domain: {personality.analogy_domain}
 - Catchphrases: {', '.join(personality.catchphrases)}
 - Tone: {personality.tone}
+- Background & Lore: {personality.background}
 
 You MUST write all narration text in the voice and style of this character. \
-Use their catchphrases naturally, draw analogies from their domain, and \
-maintain their tone throughout.
+Maintain their tone throughout and use catchphrases sparingly — only where they \
+feel natural, not forced into every sentence.
+
+CRITICAL — ANALOGY QUALITY RULES:
+- Draw analogies from SPECIFIC events, relationships, and experiences in the \
+character's Background & Lore above — not just surface-level domain keywords.
+- Every analogy must MAP the educational concept to a concrete story or situation \
+from the character's history. For example, if explaining exponential growth as \
+SpongeBob, relate it to how Plankton's schemes escalate in complexity, or how \
+SpongeBob's jellyfish collection grows — do NOT just say "this is like flipping \
+Krabby Patties."
+- Each scene should have at least one DEEP analogy that connects the concept \
+being taught to a specific narrative moment from the character's background.
+- Avoid generic catchphrase-only references. The analogy should help the student \
+UNDERSTAND the concept better, not just be entertaining.
 
 DIFFICULTY LEVEL:
 {difficulty_instruction}
 
-{AVAILABLE_SCENE_TYPES}
-
-{SCENE_COMPOSITION_GUIDELINES}
+{MANIMGL_REFERENCE}
 
 OUTPUT FORMAT:
-You must respond with ONLY a valid JSON object (no markdown, no extra text) with this exact structure:
-{{
+You must respond with ONLY a valid JSON object (no markdown, no extra text) with this structure:
+{{{{
     "title": "A catchy educational title",
     "total_scenes": <number of scenes>,
     "scenes": [
-        {{
+        {{{{
             "scene_index": 0,
-            "narration_text": "What the character says during this scene",
-            "manim_scene_type": "equation|graph|diagram|concept_reveal|geometry|number_line|coordinate_plane|comparison|summary",
-            "manim_parameters": {{ ... parameters specific to the scene type ... }},
-            "duration_hint_seconds": 10.0,
-            "character_action": "talking|pointing|idle"
-        }}
+            "narration_text": "What the character says during this scene (for voice synthesis)",
+            "manim_scene_type": "custom",
+            "manim_code": "<COMPLETE Python code for this scene — a standalone .py file with one Scene class>",
+            "duration_hint_seconds": 60,
+            "character_action": "talking"
+        }}}}
     ],
     "intro_text": "An engaging introduction by the character",
     "outro_text": "A memorable closing by the character"
-}}
+}}}}
 
-STRICT RULES:
-- Target a ~5 minute video: create exactly 4-5 scenes.
-- Set duration_hint_seconds to 60-90 per scene (this controls the actual video length!).
-- The LAST scene MUST be "summary" — always end with a visual recap.
-- NEVER use "text" as manim_scene_type — use "concept_reveal" instead.
-- AT LEAST ONE scene MUST be a "graph" type that plots actual functions from the material.
-- AT LEAST ONE scene MUST be an "equation" type showing derivation steps from the material.
-- Include color_map in equation scenes to highlight changing parts.
-- In graph scenes, use show_area, show_tangent, trace_dot, or secondary_funcs — never a bare static plot.
-- func_str in graph scenes must be valid Python: use ** for powers, np.sin/np.cos/np.exp/np.log for math.
+CRITICAL RULES:
+- Create 3-5 scenes for a ~5 minute video.
+- Set duration_hint_seconds to 40-90 per scene.
+- manim_scene_type should be "custom" for all scenes (the code handles everything).
+- manim_code must be a COMPLETE, STANDALONE Python file:
+  - Starts with `from manimlib import *` and `import numpy as np`
+  - Contains exactly ONE class inheriting from Scene
+  - The class name should be descriptive (e.g., MatrixMultiplication, EigenvalueDecomp)
+  - The construct method contains all animations
+- Use self.wait() generously (3-8 seconds) between steps so the narration has time.
+- Use FadeOut(Group(...)) to clear screen between major sections within a scene.
+- The last scene should be a summary/recap of key results.
+- narration_text is what the character SAYS during this scene — written in their voice.
+  Keep it natural and matching the character persona. 2-4 sentences per scene.
+- character_action: "talking" (explaining), "pointing" (showing something specific), "idle" (pausing)
 
-LATEX RULES (CRITICAL — violations cause rendering failures):
-- Use ONLY simple inline LaTeX. Examples: "x^2 + 3x - 1", "\\frac{{a}}{{b}}", "\\sum_{{n=1}}^{{N}} a_n"
-- NEVER use LaTeX environments: NO \\begin{{...}} or \\end{{...}} of any kind.
-- NEVER use: pmatrix, bmatrix, matrix, align, cases, array, tabular, gathered, split.
-- NEVER use: \\text{{...}}, \\mathrm{{...}}, \\textbf{{...}}, \\mbox{{...}} — these crash the renderer.
-  Instead of "\\text{{ eigenvalues: }}" just write " eigenvalues: " as plain spacing.
-- NEVER use semicolons (;) inside LaTeX strings — they crash the renderer.
-  Instead of "[a; b]" use "[a, b]".
-- For matrices: write as "A = [[row1], [row2]]" using commas only. Example: "A = [[0, 4, 3], [0, -6, 2]]"
-- For piecewise functions: use separate equation steps instead of \\begin{{cases}}.
-- Keep each LaTeX string to a SINGLE LINE of math — no multi-line constructs.
-- Use single backslashes: \\frac, \\sum, \\int — NOT double backslashes.
-- Do NOT use Unicode symbols in labels — use ASCII only (e.g., "lambda_1" not "λ₁").
-- Keep narration concise: 2-3 sentences per scene.
+MANIM_CODE STRING RULES:
+- manim_code is a JSON string. Use standard JSON string escaping.
+- Use \n for newlines, \\ for a single backslash, \\\\ for a double backslash.
+- Prefer single quotes in Python code to avoid escaping double quotes.
+- IMPORTANT: In LaTeX matrices, row breaks use \\ (two backslashes).
+  In the JSON string, encode this as \\\\ (four characters in the JSON).
 """
 
     def _build_user_message(self, extracted_text: str, user_prompt: Optional[str]) -> str:
         """Build the user message with source material."""
         message = f"""\
-Please create an educational video script based on the following source material.
-IMPORTANT: Carefully analyze what mathematical concepts, functions, and problems \
-are in this material. Then create graph scenes that plot the actual functions and \
-equation scenes that show the actual derivations from the material.
+Create an educational video script with complete ManimGL code based on this material.
+Analyze the mathematical content carefully and write ManimGL scenes that visually \
+explain the concepts with proper LaTeX, step-by-step animations, and clean transitions.
 
 --- SOURCE MATERIAL ---
 {extracted_text}
@@ -364,7 +290,7 @@ Additional instructions from the user:
 
         message += """
 Remember: respond with ONLY the JSON object, no markdown code fences or extra text.
-At least one scene must be a "graph" that plots functions from the material.
+Each scene's manim_code must be a complete, runnable ManimGL Python file.
 """
         return message
 
@@ -383,7 +309,113 @@ At least one scene must be a "graph" that plots functions from the material.
 
         try:
             return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+
+        # Attempt repair: fix common LLM JSON issues in manim_code strings
+        repaired = self._repair_json(text)
+        try:
+            return json.loads(repaired)
         except json.JSONDecodeError as e:
             logger.error("Failed to parse LLM response as JSON: %s", e)
-            logger.error("Response text: %s", text[:500])
+            logger.error("Response text (first 1000 chars): %s", text[:1000])
             raise ValueError(f"LLM did not return valid JSON: {e}")
+
+    @staticmethod
+    def _repair_json(text: str) -> str:
+        """Attempt to repair common JSON issues from LLM output.
+
+        The main problem: manim_code values contain Python source with
+        backslashes (LaTeX), newlines, and quotes that the LLM sometimes
+        fails to escape correctly for JSON.
+        """
+        import re
+
+        # Strategy: find each "manim_code": "..." value and re-escape it.
+        # We locate the string boundaries by tracking quotes carefully.
+        result = []
+        i = 0
+        key_pattern = re.compile(r'"manim_code"\s*:\s*"')
+
+        while i < len(text):
+            m = key_pattern.search(text, i)
+            if not m:
+                result.append(text[i:])
+                break
+
+            # Append everything before this manim_code value
+            result.append(text[i:m.end()])
+            i = m.end()
+
+            # Now extract the raw string value by finding the closing quote.
+            # We need to handle the LLM's potentially broken escaping.
+            raw_chars = []
+            while i < len(text):
+                ch = text[i]
+                if ch == '\\':
+                    # Look ahead
+                    if i + 1 < len(text):
+                        next_ch = text[i + 1]
+                        if next_ch in ('"', '\\', '/', 'b', 'f', 'n', 'r', 't'):
+                            # Valid JSON escape - keep as-is
+                            raw_chars.append(ch)
+                            raw_chars.append(next_ch)
+                            i += 2
+                            continue
+                        elif next_ch == 'u':
+                            # Unicode escape - keep as-is
+                            raw_chars.append(text[i:i+6])
+                            i += 6
+                            continue
+                        else:
+                            # Invalid escape (e.g. bare \S, \l, etc.)
+                            # Double the backslash to make it valid JSON
+                            raw_chars.append('\\\\')
+                            i += 1
+                            continue
+                    else:
+                        raw_chars.append('\\\\')
+                        i += 1
+                        continue
+                elif ch == '"':
+                    # Check if this is the end of the value.
+                    # Look ahead for : or , or } to confirm.
+                    rest = text[i+1:].lstrip()
+                    if rest and rest[0] in (',', '}', ']'):
+                        # This is the closing quote
+                        result.append(''.join(raw_chars))
+                        result.append('"')
+                        i += 1
+                        break
+                    elif not rest:
+                        result.append(''.join(raw_chars))
+                        result.append('"')
+                        i += 1
+                        break
+                    else:
+                        # Embedded unescaped quote - escape it
+                        raw_chars.append('\\"')
+                        i += 1
+                        continue
+                elif ch == '\n':
+                    # Literal newline inside a JSON string - replace with \n
+                    raw_chars.append('\\n')
+                    i += 1
+                    continue
+                elif ch == '\r':
+                    raw_chars.append('\\r')
+                    i += 1
+                    continue
+                elif ch == '\t':
+                    raw_chars.append('\\t')
+                    i += 1
+                    continue
+                else:
+                    raw_chars.append(ch)
+                    i += 1
+                    continue
+            else:
+                # Reached end of text without finding closing quote
+                result.append(''.join(raw_chars))
+
+        return ''.join(result)

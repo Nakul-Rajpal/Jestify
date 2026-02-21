@@ -10,3 +10,5 @@ python-dotenv
 anthropic
 setuptools<78
 audioop-lts
+sqlalchemy[asyncio]>=2.0
+asyncpg>=0.29.0

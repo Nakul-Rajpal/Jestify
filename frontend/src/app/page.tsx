@@ -7,7 +7,8 @@ import {
   JobStatus as JobStatusEnum,
   UploadedDocument,
 } from "@/types";
-import { generateVideo } from "@/lib/api";
+import Link from "next/link";
+import { generateVideo, BASE_URL } from "@/lib/api";
 import { useJobPolling } from "@/hooks/useJobPolling";
 import { useDocumentUpload } from "@/hooks/useDocumentUpload";
 import CharacterSelector from "@/components/CharacterSelector";
@@ -96,11 +97,17 @@ export default function Home() {
   return (
     <div className="flex flex-col min-h-screen bg-neutral-900 text-white">
       {/* Header */}
-      <header className="flex items-center justify-center pt-6 pb-2 px-4">
+      <header className="flex items-center justify-between pt-6 pb-2 px-4 max-w-4xl mx-auto w-full">
         <h1 className="text-xl font-semibold tracking-tight">
           <span className="text-white">Jest</span>
           <span className="text-neutral-400">ify</span>
         </h1>
+        <Link
+          href="/library"
+          className="text-sm text-neutral-400 hover:text-white transition-colors"
+        >
+          Library
+        </Link>
       </header>
 
       {/* Main content area */}
@@ -192,8 +199,8 @@ export default function Home() {
         {isJobComplete && videoUrl && (
           <div className="flex-1 flex flex-col items-center justify-center mt-12 gap-4 w-full">
             <VideoPlayer
-              videoUrl={videoUrl}
-              thumbnailUrl={thumbnailUrl}
+              videoUrl={`${BASE_URL}${videoUrl}`}
+              thumbnailUrl={thumbnailUrl ? `${BASE_URL}${thumbnailUrl}` : undefined}
             />
             <button
               onClick={handleNewVideo}

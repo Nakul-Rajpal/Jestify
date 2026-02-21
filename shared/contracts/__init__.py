@@ -6,6 +6,11 @@ from .api_types import (
     DocumentUploadResponse,
     CharacterInfo,
     CharacterListResponse,
+    LibraryResponse,
+    SubjectSummary,
+    TopicSummary,
+    VideoSummary,
+    TopicDetailResponse,
 )
 from .pipeline_schema import (
     SceneInstruction,

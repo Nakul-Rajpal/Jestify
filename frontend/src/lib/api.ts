@@ -4,9 +4,11 @@ import {
   GenerateRequest,
   GenerateResponse,
   JobStatusResponse,
+  LibraryResponse,
+  TopicDetailResponse,
 } from "@/types";
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+export const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 async function request<T>(
   endpoint: string,
@@ -60,4 +62,17 @@ export async function getJobStatus(
   jobId: string
 ): Promise<JobStatusResponse> {
   return request<JobStatusResponse>(`/api/jobs/${jobId}`);
+}
+
+export async function getLibrary(): Promise<LibraryResponse> {
+  return request<LibraryResponse>("/api/library");
+}
+
+export async function getTopicVideos(
+  subjectId: string,
+  topicId: string
+): Promise<TopicDetailResponse> {
+  return request<TopicDetailResponse>(
+    `/api/library/${subjectId}/topics/${topicId}`
+  );
 }

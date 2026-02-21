@@ -9,10 +9,11 @@ class SceneInstruction(BaseModel):
 
     scene_index: int
     narration_text: str
-    manim_scene_type: str  # "equation", "graph", "diagram", "text", "geometry"
-    manim_parameters: dict
-    duration_hint_seconds: float
-    character_action: str  # "talking", "pointing", "idle"
+    manim_scene_type: str = "custom"
+    manim_parameters: dict = {}
+    duration_hint_seconds: float = 60.0
+    character_action: str = "talking"
+    manim_code: Optional[str] = None
 
 
 class GeneratedScript(BaseModel):

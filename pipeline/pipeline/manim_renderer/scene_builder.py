@@ -55,6 +55,12 @@ class SceneBuilder:
         self, scene: SceneInstruction, output_py_path: str
     ) -> str:
         """Build a ``.py`` scene file and return the ManimGL class name."""
+
+        # If the scene has direct ManimGL code from Claude, use it
+        if scene.manim_code:
+            return self._build_from_raw_code(scene, output_py_path)
+
+        # Otherwise fall back to template-based builders
         scene_type = scene.manim_scene_type
         builder_name = self._BUILDERS.get(scene_type)
 
@@ -87,6 +93,82 @@ class SceneBuilder:
         logger.info(
             "[scene_builder] Generated source (%d chars):\n%s",
             len(source), source,
+        )
+
+        return class_name
+
+    def _build_from_raw_code(
+        self, scene: SceneInstruction, output_py_path: str
+    ) -> str:
+        """Write Claude-generated ManimGL code directly to file.
+
+        Extracts the class name from the code and ensures the import header
+        is present.
+        """
+        source = scene.manim_code
+
+        # Ensure the import header is present
+        if "from manimlib import" not in source:
+            source = "from manimlib import *\nimport numpy as np\n\n" + source
+
+        # ---- Auto-fix common ManimGL mistakes from LLM-generated code ----
+        # Process line-by-line to fix Tex() issues.
+        fixed_lines = []
+        for line in source.split('\n'):
+            if 'Tex(' in line and 'Text(' not in line:
+                # Remove font_size kwarg (Tex uses .scale() instead)
+                line = re.sub(r',\s*font_size\s*=\s*[\d.]+', '', line)
+                # Convert color kwarg to .set_color() chain
+                color_match = re.search(r',\s*color\s*=\s*(\w+)', line)
+                if color_match:
+                    color_val = color_match.group(1)
+                    line = re.sub(r',\s*color\s*=\s*\w+', '', line)
+                    # Append .set_color() after the Tex(...) call
+                    line = line.rstrip()
+                    if line.endswith(')'):
+                        line = line + f'.set_color({color_val})'
+                # Fix over-escaped backslashes from JSON double-escaping.
+                # LaTeX needs \\ (2 backslashes) for row breaks, but Claude
+                # often produces \\\\ (4 backslashes). Reduce 4+ to 2.
+                while '\\\\\\\\' in line:
+                    line = line.replace('\\\\\\\\', '\\\\')
+            fixed_lines.append(line)
+        source = '\n'.join(fixed_lines)
+
+        # Extract the class name from the source (first `class XYZ(Scene):`)
+        class_match = re.search(r"class\s+(\w+)\s*\(\s*Scene\s*\)", source)
+        if class_match:
+            class_name = class_match.group(1)
+        else:
+            # Fallback: wrap in a generic class if no Scene class found
+            class_name = f"Scene{scene.scene_index}"
+            logger.warning(
+                "[scene_builder] No Scene class found in manim_code, "
+                "wrapping in %s",
+                class_name,
+            )
+            indented = "\n".join(
+                f"        {line}" if line.strip() else ""
+                for line in source.split("\n")
+            )
+            source = (
+                "from manimlib import *\n"
+                "import numpy as np\n\n"
+                f"class {class_name}(Scene):\n"
+                f"    def construct(self):\n"
+                f"{indented}\n"
+            )
+
+        Path(output_py_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(output_py_path).write_text(source, encoding="utf-8")
+
+        logger.info(
+            "[scene_builder] Built scene file from raw code %s (class=%s)",
+            output_py_path, class_name,
+        )
+        logger.info(
+            "[scene_builder] Raw source (%d chars):\n%s",
+            len(source), source[:2000],
         )
 
         return class_name

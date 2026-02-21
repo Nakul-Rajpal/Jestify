@@ -29,6 +29,11 @@ class Job(Base):
     script_json = Column(JSON, nullable=True)
     video_path = Column(String(500), nullable=True)
     thumbnail_path = Column(String(500), nullable=True)
+    topic_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("topics.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     error_message = Column(Text, nullable=True)
     created_at = Column(
         DateTime(timezone=True),
@@ -44,6 +49,7 @@ class Job(Base):
 
     # Relationships
     documents = relationship("Document", secondary=job_documents, back_populates="jobs")
+    topic = relationship("Topic", back_populates="jobs")
 
     def __repr__(self) -> str:
         return f"<Job(id={self.id}, status={self.status}, character={self.character})>"

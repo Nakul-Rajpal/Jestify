@@ -1,9 +1,12 @@
 """Executes ManimGL via subprocess to render scene files into MP4 clips."""
 
 import logging
+import os
 import platform
 import shutil
+import stat
 import subprocess
+import tempfile
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -80,6 +83,24 @@ class ManimRenderer:
 
         logger.info("[render] Running command: %s", " ".join(cmd))
 
+        # Ensure LaTeX binaries (MacTeX) are on the PATH for the subprocess
+        env = os.environ.copy()
+        tex_bin = "/Library/TeX/texbin"
+        if tex_bin not in env.get("PATH", ""):
+            env["PATH"] = tex_bin + ":" + env.get("PATH", "")
+
+        # On macOS, suppress manimgl's auto-open of rendered files.
+        # ManimGL's -o flag writes to file AND calls `open <file>` afterward.
+        # We inject a no-op `open` script at the front of PATH so that call
+        # does nothing, while the real rendering still works.
+        noop_dir = None
+        if platform.system() == "Darwin":
+            noop_dir = Path(tempfile.mkdtemp(prefix="jestify_noop_"))
+            noop_open = noop_dir / "open"
+            noop_open.write_text("#!/bin/sh\nexit 0\n")
+            noop_open.chmod(noop_open.stat().st_mode | stat.S_IEXEC)
+            env["PATH"] = str(noop_dir) + ":" + env["PATH"]
+
         try:
             result = subprocess.run(
                 cmd,
@@ -87,6 +108,7 @@ class ManimRenderer:
                 text=True,
                 timeout=self._timeout,
                 cwd=str(scene_py.parent),
+                env=env,
             )
         except subprocess.TimeoutExpired as exc:
             logger.error("[render] TIMEOUT after %ds for %s::%s", self._timeout, scene_py_path, class_name)
@@ -94,19 +116,22 @@ class ManimRenderer:
                 f"ManimGL render timed out after {self._timeout}s "
                 f"for {scene_py_path}::{class_name}"
             ) from exc
+        finally:
+            if noop_dir and noop_dir.exists():
+                shutil.rmtree(noop_dir, ignore_errors=True)
 
         logger.info("[render] Exit code: %d", result.returncode)
 
         if result.stdout:
             logger.info("[render] stdout:\n%s", result.stdout[:2000])
         if result.stderr:
-            logger.info("[render] stderr:\n%s", result.stderr[:2000])
+            logger.info("[render] stderr:\n%s", result.stderr[-4000:])
 
         if result.returncode != 0:
             logger.error("[render] FAILED for %s::%s (exit %d)", scene_py_path, class_name, result.returncode)
             raise RuntimeError(
                 f"ManimGL render failed (exit {result.returncode}) "
-                f"for {scene_py_path}::{class_name}:\n{result.stderr[:2000]}"
+                f"for {scene_py_path}::{class_name}:\n{result.stderr[-4000:]}"
             )
 
         # Locate the output file

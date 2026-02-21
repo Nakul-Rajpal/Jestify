@@ -134,6 +134,11 @@ def generate_video_task(
             current_step="Video generation complete.",
         )
 
+        # Trigger post-processing classification into subject/topic
+        from .classify_task import classify_video_task
+
+        classify_video_task.delay(job_id)
+
         return {
             "job_id": job_id,
             "status": "completed",

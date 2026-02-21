@@ -11,40 +11,11 @@ export default function VideoPlayer({
   thumbnailUrl,
   title = "Your Educational Video",
 }: VideoPlayerProps) {
-  const handleDownload = () => {
-    const link = document.createElement("a");
-    link.href = videoUrl;
-    link.download = "jestify-video.mp4";
-    link.target = "_blank";
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
   return (
     <div className="w-full max-w-2xl mx-auto">
       {/* Video title */}
-      <div className="flex items-center justify-between mb-4">
+      <div className="mb-4">
         <h3 className="text-lg font-medium text-white">{title}</h3>
-        <button
-          onClick={handleDownload}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-neutral-800 border border-neutral-700 text-sm text-neutral-300 hover:text-white hover:border-neutral-500 transition-colors duration-200 cursor-pointer"
-        >
-          <svg
-            className="w-4 h-4"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
-            <polyline points="7 10 12 15 17 10" />
-            <line x1="12" y1="15" x2="12" y2="3" />
-          </svg>
-          Download
-        </button>
       </div>
 
       {/* Video player */}

@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://jestify:devpassword@localhost:5432/jestify"
     REDIS_URL: str = "redis://localhost:6379/0"
     ANTHROPIC_API_KEY: str = ""
-    STORAGE_PATH: str = "./storage"
+    STORAGE_PATH: str = str(PROJECT_ROOT / "storage")
     CORS_ORIGINS: List[str] = ["http://localhost:3000"]
 
     model_config = {
