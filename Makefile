@@ -15,6 +15,9 @@ dev-backend:
 	cd backend && uvicorn app.main:app --reload --port 8000
 
 dev-worker:
+	$(eval TEXMF_WEB2C := $(shell kpsewhich texmf.cnf 2>/dev/null | xargs dirname 2>/dev/null))
+	export TEXMFCNF="$(TEXMF_WEB2C):"; \
+	export TEXMFDIST="$(shell dirname $(TEXMF_WEB2C) 2>/dev/null)"; \
 	PYTHONPATH=pipeline:. celery -A pipeline.worker worker -Q video_pipeline -c 1 --loglevel=info
 
 # Setup

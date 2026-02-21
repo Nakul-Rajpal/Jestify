@@ -3,17 +3,14 @@
 import logging
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 
 class VideoAssembler:
-    """Joins multiple scene clips into one continuous video.
-
-    Uses FFmpeg's concat demuxer to concatenate the clips and encodes
-    the result as H.264 at 1080p resolution.
-    """
+    """Joins multiple scene clips into one continuous video."""
 
     def assemble(
         self,
@@ -21,62 +18,68 @@ class VideoAssembler:
         output_path: str,
         intro_title: str | None = None,
     ) -> str:
-        """Assemble scene clips into the final video.
+        """Assemble scene clips into the final video."""
+        logger.info("[assembler] ┌─ Assembling final video")
+        logger.info("[assembler] │  Clips: %d", len(scene_clips))
+        logger.info("[assembler] │  Output: %s", output_path)
 
-        Parameters
-        ----------
-        scene_clips : list[str]
-            Ordered list of composited MP4 clip paths.
-        output_path : str
-            Destination path for the final video.
-        intro_title : str, optional
-            Title text (reserved for future title-card generation).
-
-        Returns
-        -------
-        str
-            Absolute path to the final assembled video.
-        """
         if not scene_clips:
+            logger.error("[assembler] └─ No scene clips provided")
             raise ValueError("No scene clips provided for assembly")
+
+        for i, clip in enumerate(scene_clips):
+            exists = Path(clip).exists()
+            size = Path(clip).stat().st_size / (1024 * 1024) if exists else 0
+            logger.info("[assembler] │  Clip %d: %s (exists=%s, %.1f MB)", i + 1, clip, exists, size)
+            if not exists:
+                logger.error("[assembler] │  MISSING clip: %s", clip)
 
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
         if intro_title:
-            logger.info("Video title: '%s' (title card not yet implemented)", intro_title)
+            logger.info("[assembler] │  Title: '%s'", intro_title)
 
-        # Write the concat list file
         concat_file = self._write_concat_file(scene_clips)
+        concat_contents = Path(concat_file).read_text()
+        logger.info("[assembler] │  Concat file: %s", concat_file)
+        logger.info("[assembler] │  Concat contents:\n%s", concat_contents)
 
         cmd = [
             "ffmpeg", "-y",
-            "-f", "concat",
-            "-safe", "0",
+            "-f", "concat", "-safe", "0",
             "-i", concat_file,
             "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2",
-            "-c:v", "libx264",
-            "-preset", "medium",
-            "-crf", "23",
-            "-c:a", "aac",
-            "-b:a", "192k",
+            "-c:v", "libx264", "-preset", "medium", "-crf", "23",
+            "-c:a", "aac", "-b:a", "192k",
             "-movflags", "+faststart",
             output_path,
         ]
 
-        logger.info("Assembling %d clips -> %s", len(scene_clips), output_path)
+        logger.info("[assembler] │  Command: %s", " ".join(cmd))
 
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=300,
-        )
+        t0 = time.perf_counter()
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        elapsed = time.perf_counter() - t0
+
+        if result.stdout.strip():
+            logger.info("[assembler] │  stdout: %s", result.stdout.strip()[:500])
+        if result.stderr.strip():
+            level = logging.ERROR if result.returncode != 0 else logging.DEBUG
+            logger.log(level, "[assembler] │  stderr: %s", result.stderr.strip()[:1000])
+
         if result.returncode != 0:
-            logger.error("FFmpeg stderr:\n%s", result.stderr)
+            logger.error("[assembler] └─ FAILED (exit %d, %.1fs)", result.returncode, elapsed)
             raise RuntimeError(
                 f"FFmpeg assembly failed (exit {result.returncode}):\n"
                 f"{result.stderr[:2000]}"
             )
 
-        logger.info("Final video written to %s", output_path)
-        return str(Path(output_path).resolve())
+        out_path = Path(output_path)
+        out_size = out_path.stat().st_size / (1024 * 1024)
+        logger.info(
+            "[assembler] └─ OK: %s (%.1f MB, %.1fs)", output_path, out_size, elapsed,
+        )
+        return str(out_path.resolve())
 
     @staticmethod
     def _write_concat_file(clips: list[str]) -> str:

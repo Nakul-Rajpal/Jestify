@@ -1,3 +1,4 @@
+manim>=0.18.0
 manimgl
 celery>=5.3.0
 redis>=5.0.0
@@ -9,4 +10,16 @@ pydantic-settings
 python-dotenv
 anthropic
 setuptools<78
-audioop-lts
+# audioop-lts: only for Python 3.13+ (stdlib audioop removed). On 3.12 use stdlib; on 3.13+ run: pip install audioop-lts
+
+# Manim plugins
+manim-chemistry==0.5.1
+manim-automata
+manim-CAD-Drawing-Utils
+manim-physics
+manim-voiceover
+manim-dsa
+manim-circuit
+manim-astronomy
+manim-code-blocks-redux
+manim-slides
