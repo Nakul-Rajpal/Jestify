@@ -1,5 +1,13 @@
 """FastAPI application entrypoint."""
 
+import sys
+from pathlib import Path
+
+# Add project root to sys.path so 'shared' package is importable
+_project_root = str(Path(__file__).resolve().parents[2])
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI

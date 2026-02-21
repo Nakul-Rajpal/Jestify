@@ -10,6 +10,12 @@ _PROJECT_ROOT = str(Path(__file__).resolve().parents[2])
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
+# Also ensure pipeline/ dir is on sys.path so 'pipeline' package is importable
+# when running celery from the pipeline/ directory.
+_PIPELINE_DIR = str(Path(__file__).resolve().parents[1])
+if _PIPELINE_DIR not in sys.path:
+    sys.path.insert(0, _PIPELINE_DIR)
+
 from celery import Celery
 
 from shared.contracts.enums import JobStatus

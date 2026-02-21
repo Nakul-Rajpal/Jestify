@@ -15,7 +15,7 @@ dev-backend:
 	cd backend && uvicorn app.main:app --reload --port 8000
 
 dev-worker:
-	cd pipeline && celery -A pipeline.worker worker -Q video_pipeline -c 1 --loglevel=info
+	PYTHONPATH=pipeline:. celery -A pipeline.worker worker -Q video_pipeline -c 1 --loglevel=info
 
 # Setup
 setup-frontend:
