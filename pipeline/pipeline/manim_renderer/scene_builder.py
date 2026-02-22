@@ -44,7 +44,7 @@ class SceneBuilder:
         return class_name
 
     def _use_llm_code(self, scene: SceneInstruction) -> tuple[str, str]:
-        """Sanitize and validate LLM-generated Manim code."""
+        """Sanitize and validate LLM-generated ManimGL code."""
         source = scene.manim_code or ""
         logger.info("[scene_builder] │  LLM code: %d chars", len(source))
 
@@ -57,17 +57,38 @@ class SceneBuilder:
             source = self._wrap_in_scene_class(source, expected)
             class_name = expected
 
-        if "from manim import" not in source:
-            source = "from manim import *\n\n" + source
-            logger.info("[scene_builder] │  Added missing 'from manim import *'")
+        if "from manimlib import" not in source and "from manim import" not in source:
+            source = "from manimlib import *\nimport numpy as np\n\n" + source
+            logger.info("[scene_builder] │  Added missing 'from manimlib import *'")
+
+        # Enforce minimum font_size of 24 on all Text/Tex objects
+        source = self._enforce_font_floor(source)
 
         errors = self._validate_ast(source)
         if errors:
-            logger.error("[scene_builder] │  AST validation failed: %s", errors)
-            logger.info("[scene_builder] │  Falling back to template")
-            return self._build_fallback(scene)
+            logger.warning("[scene_builder] │  AST validation issues: %s", errors)
+            logger.info("[scene_builder] │  Attempting auto-fix before fallback...")
+            source = self._auto_fix_code(source)
+            # Re-extract class name after patching (import line may have changed)
+            patched_class = self._extract_class_name(source)
+            if patched_class:
+                class_name = patched_class
+            errors = self._validate_ast(source)
+            if errors:
+                logger.error("[scene_builder] │  Auto-fix did not resolve: %s", errors)
+                logger.info("[scene_builder] │  Falling back to template")
+                return self._build_fallback(scene)
+            logger.info("[scene_builder] │  Auto-fix resolved all issues")
 
         return source, class_name
+
+    @staticmethod
+    def _enforce_font_floor(source: str) -> str:
+        """Clamp any font_size below 24 up to 24."""
+        def _clamp(m: re.Match) -> str:
+            fs = int(m.group(1))
+            return f"font_size={max(fs, 24)}"
+        return re.sub(r'font_size\s*=\s*(\d+)', _clamp, source)
 
     def _sanitize_code(self, source: str) -> str:
         """Clean up common LLM code generation issues."""
@@ -81,7 +102,8 @@ class SceneBuilder:
             source = source[:-3]
         source = source.strip()
 
-        source = re.sub(r"from manimlib import \*", "from manim import *", source)
+        # Keep whatever import the LLM used — renderer._patch_ce_to_gl()
+        # will normalise to manimlib when running under ManimGL.
 
         return source
 
@@ -171,6 +193,10 @@ class {class_name}(Scene):
 {indented_body}
 """
 
+    # Patterns known to crash ManimGL at render time
+    _BANNED_CALLS = {"get_area", "get_axis_labels", "add_coordinates", "always_redraw"}
+    _BANNED_AXES_KWARGS = {"x_length", "y_length", "tips", "axis_config", "include_numbers", "include_tip"}
+
     def _validate_ast(self, source: str) -> list[str]:
         """Parse source with AST and return list of error messages."""
         errors = []
@@ -197,11 +223,44 @@ class {class_name}(Scene):
                                 if item.name == "construct":
                                     has_construct = True
 
+            # Detect banned plugin imports: from manim_* import ...
+            if isinstance(node, ast.ImportFrom) and node.module:
+                if node.module.startswith("manim_"):
+                    errors.append(f"Banned plugin import: from {node.module}")
+
+            # Detect banned method calls
+            if isinstance(node, ast.Call):
+                func = node.func
+                call_name = ""
+                if isinstance(func, ast.Attribute):
+                    call_name = func.attr
+                elif isinstance(func, ast.Name):
+                    call_name = func.id
+                if call_name in self._BANNED_CALLS:
+                    errors.append(f"Banned call: {call_name}()")
+                if call_name == "MathTex":
+                    errors.append("Banned call: MathTex() — use Tex()")
+
+                # Detect banned Axes kwargs
+                if call_name == "Axes":
+                    for kw in node.keywords:
+                        if kw.arg in self._BANNED_AXES_KWARGS:
+                            errors.append(f"Banned Axes kwarg: {kw.arg}")
+
         if not has_scene_class:
             errors.append("No Scene subclass found")
         if not has_construct:
             errors.append("No construct() method found")
         return errors
+
+    @staticmethod
+    def _auto_fix_code(source: str) -> str:
+        """Apply the same transforms as renderer._patch_ce_to_gl() to fix issues early.
+
+        This gives us a chance to salvage LLM code before falling back to templates.
+        """
+        from pipeline.manim_renderer.renderer import ManimRenderer
+        return ManimRenderer._patch_ce_to_gl(source)
 
     @staticmethod
     def _extract_key_phrases(narration: str, count: int = 3) -> list[str]:
@@ -247,69 +306,83 @@ class {class_name}(Scene):
             x_label_e = x_label.replace('"', '\\"')[:20]
             y_label_e = y_label.replace('"', '\\"')[:20]
             body = f"""
+        # Graph Layout: axes at grid MAIN_AREA
         axes = Axes(
             x_range=[-4, 4, 1], y_range=[-3, 10, 1],
-            x_length=9, y_length=5, axis_config={{"include_numbers": True}},
-        ).shift(DOWN * 0.3)
-        x_lab = Text("{x_label_e}", font_size=24).next_to(axes.x_axis, RIGHT, buff=0.2)
-        y_lab = Text("{y_label_e}", font_size=24).next_to(axes.y_axis, UP, buff=0.2)
-        self.play(Create(axes), Write(x_lab), Write(y_lab), run_time=2.5)
+        )
+        axes.move_to(DOWN * 0.3)
+        x_lab = Text("{x_label_e}", font_size=28).next_to(axes.x_axis, RIGHT, buff=0.2)
+        y_lab = Text("{y_label_e}", font_size=28).next_to(axes.y_axis, UP, buff=0.2)
+        self.play(ShowCreation(axes), Write(x_lab), Write(y_lab), run_time=2.5)
         self.wait(1)
 
-        graph = axes.plot(lambda x: x**2, x_range=[-3, 3], color=BLUE)
-        graph2 = axes.plot(lambda x: 2*x, x_range=[-3, 3], color=GREEN)
-        lbl1 = Text("{p1[:40]}", font_size=22, color=BLUE).next_to(axes.c2p(2, 4), RIGHT, buff=0.2)
-        lbl2 = Text("{p2[:40]}", font_size=22, color=GREEN).next_to(axes.c2p(2.5, 5), RIGHT, buff=0.2)
-        self.play(Create(graph), run_time=2.5)
-        self.play(Write(lbl1), run_time=1.2)
-        self.play(Create(graph2), run_time=2.0)
-        self.play(Write(lbl2), run_time=1.2)
+        graph = axes.get_graph(lambda x: x**2, color=BLUE, x_range=[-3, 3])
+        graph2 = axes.get_graph(lambda x: 2*x, color=GREEN, x_range=[-3, 3])
+        lbl1 = Text("{p1[:40]}", font_size=26, color=BLUE).next_to(axes.c2p(2, 4), RIGHT, buff=0.2)
+        lbl2 = Text("{p2[:40]}", font_size=26, color=GREEN).next_to(axes.c2p(2.5, 5), RIGHT, buff=0.2)
+        self.play(ShowCreation(graph), run_time=2.5)
+        self.play(Write(lbl1), run_time=1.5)
+        self.play(graph.animate.set_opacity(0.3), run_time=0.5)
+        self.play(ShowCreation(graph2), run_time=2.0)
+        self.play(Write(lbl2), run_time=1.5)
         self.wait(1)
+        self.play(graph.animate.set_opacity(1.0), run_time=0.5)
 
         moving_dot = Dot(color=YELLOW).move_to(axes.c2p(-2, 4))
         self.play(FadeIn(moving_dot), run_time=1)
         self.play(MoveAlongPath(moving_dot, graph), run_time=3)
         self.wait(1)
 
-        area = axes.get_area(graph, x_range=[0, 2], color=BLUE_E, opacity=0.35)
-        note = Text("{p3[:48]}", font_size=22, color=YELLOW).to_edge(DOWN, buff=0.4)
-        self.play(FadeIn(area), Write(note), run_time=2)
+        note = Text("{p3[:48]}", font_size=26, color=YELLOW).move_to(DOWN * 2.8)
+        self.play(Write(note), run_time=2)
         self.wait({hold})
 """
         elif scene_type == "equation":
             body = f"""
-        step1 = Text("{p1[:60]}", font_size=38)
-        step2 = Text("{p2[:60]}", font_size=38)
-        step3 = Text("{p3[:60]}", font_size=38)
-        step2.move_to(step1)
-        step3.move_to(step1)
+        # Full Center: equations at grid MAIN_AREA
+        step1 = Text("{p1[:60]}", font_size=38).move_to(DOWN * 0.3)
+        step2 = Text("{p2[:60]}", font_size=38).move_to(DOWN * 0.3)
+        step3 = Text("{p3[:60]}", font_size=38).move_to(DOWN * 0.3)
 
         self.play(Write(step1), run_time=2.5)
         self.wait(1.5)
-        self.play(Transform(step1, step2), run_time=2.5)
+        self.play(ReplacementTransform(step1, step2), run_time=2.5)
         self.wait(1.5)
-        self.play(Transform(step1, step3), run_time=2.5)
+        self.play(ReplacementTransform(step2, step3), run_time=2.5)
         box = SurroundingRectangle(step3, color=YELLOW, buff=0.25)
-        self.play(Create(box), run_time=1.2)
+        self.play(ShowCreation(box), run_time=1.5)
+        self.play(Indicate(step3, color=YELLOW), run_time=1.2)
         self.wait({hold})
 """
         elif scene_type in {"diagram", "concept_reveal", "summary"}:
             colors = ["BLUE", "GREEN", "TEAL"]
             body = f"""
-        card1 = RoundedRectangle(width=5.5, height=1.2, corner_radius=0.15, color={colors[0]})
-        card2 = RoundedRectangle(width=5.5, height=1.2, corner_radius=0.15, color={colors[1]})
-        card3 = RoundedRectangle(width=5.5, height=1.2, corner_radius=0.15, color={colors[2]})
-        cards = VGroup(card1, card2, card3).arrange(DOWN, buff=0.4).shift(DOWN*0.3)
-        t1 = Text("{p1[:52]}", font_size=26).move_to(card1)
-        t2 = Text("{p2[:52]}", font_size=26).move_to(card2)
-        t3 = Text("{p3[:52]}", font_size=26).move_to(card3)
+        # Vertical Stack: cards at grid MAIN_AREA
+        card1 = RoundedRectangle(width=6, height=1.0, corner_radius=0.15, color={colors[0]})
+        card2 = RoundedRectangle(width=6, height=1.0, corner_radius=0.15, color={colors[1]})
+        card3 = RoundedRectangle(width=6, height=1.0, corner_radius=0.15, color={colors[2]})
+        cards = VGroup(card1, card2, card3).arrange(DOWN, buff=0.4)
+        cards.move_to(DOWN * 0.3)
+        t1 = Text("{p1[:52]}", font_size=30).move_to(card1)
+        t2 = Text("{p2[:52]}", font_size=30).move_to(card2)
+        t3 = Text("{p3[:52]}", font_size=30).move_to(card3)
 
-        self.play(FadeIn(card1), Write(t1), run_time=2.0)
-        self.wait(0.6)
-        self.play(FadeIn(card2), Write(t2), run_time=2.0)
-        self.wait(0.6)
-        self.play(FadeIn(card3), Write(t3), run_time=2.0)
-        self.wait(0.6)
+        # Progressive reveal with dimming
+        self.play(FadeIn(card1, shift=UP*0.3), Write(t1), run_time=2.0)
+        self.wait(0.8)
+        self.play(VGroup(card1, t1).animate.set_opacity(0.3), run_time=0.5)
+        self.play(FadeIn(card2, shift=UP*0.3), Write(t2), run_time=2.0)
+        self.wait(0.8)
+        self.play(VGroup(card2, t2).animate.set_opacity(0.3), run_time=0.5)
+        self.play(FadeIn(card3, shift=UP*0.3), Write(t3), run_time=2.0)
+        self.wait(0.8)
+
+        # Restore all and emphasize
+        self.play(
+            VGroup(card1, t1).animate.set_opacity(1.0),
+            VGroup(card2, t2).animate.set_opacity(1.0),
+            run_time=0.8,
+        )
         arrow = Arrow(card1.get_bottom(), card3.get_top(), color=WHITE, buff=0.15)
         self.play(GrowArrow(arrow), run_time=1.6)
         self.play(Indicate(card3, color=YELLOW), run_time=1.4)
@@ -317,35 +390,57 @@ class {class_name}(Scene):
 """
         else:
             body = f"""
+        # Generic layout: plane at MAIN_AREA, text overlay
         plane = NumberPlane(
             x_range=[-5,5,1], y_range=[-3,3,1],
             background_line_style={{"stroke_opacity": 0.35}}
-        ).shift(DOWN*0.2)
-        self.play(Create(plane), run_time=2.2)
+        )
+        plane.move_to(DOWN * 0.3)
+        self.play(ShowCreation(plane), run_time=2.2)
         self.wait(0.8)
 
-        point1 = Text("{p1[:44]}", font_size=26, color=BLUE)
-        point2 = Text("{p2[:44]}", font_size=26, color=GREEN)
-        point3 = Text("{p3[:44]}", font_size=26, color=YELLOW)
-        points = VGroup(point1, point2, point3).arrange(DOWN, buff=0.5).shift(UP*0.5)
-        for pt in [point1, point2, point3]:
-            bg = BackgroundRectangle(pt, color=BLACK, fill_opacity=0.7, buff=0.15)
-            self.play(FadeIn(bg), Write(pt), run_time=2.0)
-            self.wait(0.8)
+        point1 = Text("{p1[:44]}", font_size=30, color=BLUE)
+        point2 = Text("{p2[:44]}", font_size=30, color=GREEN)
+        point3 = Text("{p3[:44]}", font_size=30, color=YELLOW)
+        points = VGroup(point1, point2, point3).arrange(DOWN, buff=0.5)
+        points.move_to(DOWN * 0.3)
+
+        # Staggered reveal with dimming
+        bg1 = BackgroundRectangle(point1, color=BLACK, fill_opacity=0.7, buff=0.15)
+        self.play(FadeIn(bg1), Write(point1), run_time=2.0)
+        self.wait(0.8)
+        self.play(VGroup(bg1, point1).animate.set_opacity(0.3), run_time=0.5)
+        bg2 = BackgroundRectangle(point2, color=BLACK, fill_opacity=0.7, buff=0.15)
+        self.play(FadeIn(bg2), Write(point2), run_time=2.0)
+        self.wait(0.8)
+        self.play(VGroup(bg2, point2).animate.set_opacity(0.3), run_time=0.5)
+        bg3 = BackgroundRectangle(point3, color=BLACK, fill_opacity=0.7, buff=0.15)
+        self.play(FadeIn(bg3), Write(point3), run_time=2.0)
+        self.wait(0.8)
+
+        # Restore all
+        self.play(
+            VGroup(bg1, point1).animate.set_opacity(1.0),
+            VGroup(bg2, point2).animate.set_opacity(1.0),
+            run_time=0.8,
+        )
         self.play(Indicate(point3, color=YELLOW, scale_factor=1.15), run_time=1.4)
         self.wait({hold})
 """
 
-        source = f'''from manim import *
+        source = f'''from manimlib import *
+import numpy as np
 
 class {class_name}(Scene):
     def construct(self):
+        # TITLE at grid TITLE_POS
         title = Text("{title_escaped}", font_size=42)
         self.play(Write(title), run_time=1.8)
         self.wait(0.8)
-        self.play(title.animate.to_edge(UP, buff=0.5), run_time=1)
+        self.play(title.animate.move_to(UP * 3.2), run_time=1)
         self.wait(0.8)
 {body}
+        # CLEANUP — mandatory
         self.play(*[FadeOut(m) for m in self.mobjects], run_time=1.2)
         self.wait(1)
 '''

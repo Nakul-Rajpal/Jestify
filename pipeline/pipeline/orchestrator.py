@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 StatusCallback = Callable[[JobStatus, int], None]
 
-MAX_RENDER_RETRIES = 2
+MAX_RENDER_RETRIES = 3
 MAX_FAILED_SCENES_BEFORE_ABORT = 4
 
 
@@ -94,17 +94,23 @@ class PipelineOrchestrator:
                         break
                     except Exception as e:
                         last_error = str(e)
+                        err_lower = last_error.lower()
                         logger.error(
                             "[orchestrator] Attempt %d/%d failed for scene %d: %s",
                             attempt, MAX_RENDER_RETRIES, idx + 1, e,
                         )
                         if scene.manim_code:
-                            if "dvi" in last_error.lower() or "svg" in last_error.lower() or "latex" in last_error.lower():
+                            # Detect LaTeX/rendering errors (dvi, svg, latex, cache, tex)
+                            is_latex_error = any(
+                                kw in err_lower
+                                for kw in ("dvi", "svg", "latex", "cache", "tex(", "typeerror")
+                            )
+                            if is_latex_error and attempt == 1:
                                 sanitized = self._sanitize_latex_to_text(scene.manim_code)
                                 if sanitized != scene.manim_code:
                                     scene.manim_code = sanitized
                                     logger.warning(
-                                        "[orchestrator] Scene %d: sanitized MathTex→Text, retrying",
+                                        "[orchestrator] Scene %d: sanitized Tex→Text, retrying",
                                         idx + 1,
                                     )
                                 else:
@@ -113,10 +119,11 @@ class PipelineOrchestrator:
                                         "[orchestrator] Scene %d: sanitization unchanged, falling back to template",
                                         idx + 1,
                                     )
-                            elif attempt >= MAX_RENDER_RETRIES:
+                            else:
+                                # Any other error or repeated failure: drop LLM code
                                 scene.manim_code = None
                                 logger.warning(
-                                    "[orchestrator] Scene %d: LLM code failed %d times, falling back to template",
+                                    "[orchestrator] Scene %d: LLM code failed (attempt %d), falling back to template",
                                     idx + 1, attempt,
                                 )
                         if attempt < MAX_RENDER_RETRIES:
