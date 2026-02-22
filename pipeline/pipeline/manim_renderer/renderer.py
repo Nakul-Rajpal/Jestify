@@ -222,9 +222,15 @@ class ManimRenderer:
                 capture_output=True, text=True, timeout=10,
             )
             if result.returncode == 0 and result.stdout.strip():
-                cnf_dir = Path(result.stdout.strip()).parent
+                cnf_path = Path(result.stdout.strip())
+                cnf_dir = cnf_path.parent
                 texmfcnf = texmfcnf or (str(cnf_dir) + ":")
-                texmfdist = texmfdist or str(cnf_dir.parent)
+                # Look for texmf-dist alongside or under cnf_dir
+                texmf_dist_candidate = cnf_dir / "texmf-dist"
+                if texmf_dist_candidate.is_dir():
+                    texmfdist = texmfdist or str(texmf_dist_candidate)
+                else:
+                    texmfdist = texmfdist or str(cnf_dir.parent)
                 return texmfcnf, texmfdist
         except Exception:
             pass
@@ -302,6 +308,74 @@ class ManimRenderer:
                 "from manim import *\nimport numpy as np",
                 1,
             )
+
+        # ── Nuclear MathTex/Tex → Text monkey-patch ─────────────────────
+        # ManimCE internally creates MathTex in dozens of methods (axis
+        # labels, graph labels, number lines, etc.).  Patching module
+        # namespaces does NOT work because NumberLine.__init__ captures
+        # MathTex as a default-parameter value at class-definition time.
+        #
+        # The fix: patch MathTex.__new__ on the CLASS OBJECT itself.
+        # Any code that instantiates MathTex (even via the captured default)
+        # calls __new__, which now returns a Text object.  Since the
+        # returned object is not a MathTex instance, Python skips __init__
+        # entirely — no LaTeX compilation ever runs.
+        if "_tex_shim_new" not in source:
+            _shim = (
+                '\n# ── MathTex/Tex → Text shim (LaTeX not available) ──\n'
+                'import re as _re_mp\n'
+                'import manim.mobject.text.tex_mobject as _texm\n'
+                'def _clean_tex(combined):\n'
+                '    combined = _re_mp.sub(r"\\\\frac\\{([^}]*)\\}\\{([^}]*)\\}", r"(\\1)/(\\2)", combined)\n'
+                '    combined = _re_mp.sub(r"\\\\sqrt\\{([^}]*)\\}", "\\u221a(\\\\1)", combined)\n'
+                '    for _cmd, _sym in [("cdot","\\u00b7"),("times","\\u00d7"),("pm","\\u00b1"),'
+                '("infty","\\u221e"),("pi","\\u03c0"),("sum","\\u03a3"),("int","\\u222b"),'
+                '("rightarrow","\\u2192"),("Rightarrow","\\u21d2"),("leq","\\u2264"),'
+                '("geq","\\u2265"),("neq","\\u2260"),("approx","\\u2248"),'
+                '("alpha","\\u03b1"),("beta","\\u03b2"),("gamma","\\u03b3"),'
+                '("theta","\\u03b8"),("Delta","\\u0394"),("lambda","\\u03bb"),'
+                '("sigma","\\u03c3"),("omega","\\u03c9"),("mu","\\u03bc"),("epsilon","\\u03b5")]:\n'
+                '        combined = combined.replace("\\\\" + _cmd, _sym)\n'
+                '    combined = _re_mp.sub(r"\\\\[a-zA-Z]+\\{([^}]*)\\}", r"\\1", combined)\n'
+                '    combined = _re_mp.sub(r"\\\\[a-zA-Z]+", "", combined)\n'
+                '    combined = _re_mp.sub(r"[{}]", "", combined)\n'
+                '    for _s, _r in [("^2","\\u00b2"),("^3","\\u00b3"),("^n","\\u207f"),'
+                '("^{-1}","\\u207b\\u00b9"),("^0","\\u2070"),("^4","\\u2074")]:\n'
+                '        combined = combined.replace(_s, _r)\n'
+                '    for _s, _r in [("_0","\\u2080"),("_1","\\u2081"),("_2","\\u2082"),'
+                '("_3","\\u2083"),("_n","\\u2099"),("_i","\\u1d62"),("_x","\\u2093")]:\n'
+                '        combined = combined.replace(_s, _r)\n'
+                '    combined = _re_mp.sub(r"\\s+", " ", combined).strip() or "\\u2026"\n'
+                '    return combined\n'
+                '\n'
+                'def _tex_shim_new(cls, *args, **kwargs):\n'
+                '    """Return a Text object instead of compiling LaTeX."""\n'
+                '    tex_strings = [a for a in args if isinstance(a, (str, int, float))]\n'
+                '    if not tex_strings:\n'
+                '        tex_strings = ["\\u2026"]\n'
+                '    combined = _clean_tex(" ".join(str(s) for s in tex_strings))\n'
+                '    safe_kw = {k: v for k, v in kwargs.items()\n'
+                '               if k in ("color","font_size","weight","slant")}\n'
+                '    safe_kw.setdefault("font_size", 36)\n'
+                '    return Text(combined, **safe_kw)\n'
+                '\n'
+                '# Patch the CLASS OBJECTS so even default-parameter references work\n'
+                '_texm.MathTex.__new__ = staticmethod(_tex_shim_new)\n'
+                'if hasattr(_texm, "SingleStringMathTex"):\n'
+                '    _texm.SingleStringMathTex.__new__ = staticmethod(_tex_shim_new)\n'
+                '# Also override names in local scope for any direct calls\n'
+                'MathTex = _tex_shim_new\n'
+                'Tex = _tex_shim_new\n'
+                '# ── end shim ──\n'
+            )
+            # Insert after the last import line
+            import_end = 0
+            for i, line in enumerate(source.split('\n')):
+                if line.startswith('import ') or line.startswith('from '):
+                    import_end = i
+            lines = source.split('\n')
+            lines.insert(import_end + 1, _shim)
+            source = '\n'.join(lines)
 
         # ── Animation renames (GL → CE) ─────────────────────────────────
         source = _re.sub(r'\bShowCreation\(', 'Create(', source)
@@ -410,6 +484,70 @@ class ManimRenderer:
         source = _re.sub(
             r'(title\w*)\.to_edge\(\s*UP\s*(?:,\s*buff\s*=\s*[\d.]+)?\s*\)',
             r'\1.move_to(UP * 3.2)',
+            source,
+        )
+
+        # ── Convert axis label string args to Text() to avoid hidden MathTex ──
+        # ManimCE's get_x_axis_label("x") internally creates MathTex("x")
+        # which requires LaTeX. Pass Text() objects instead.
+        def _axis_label_to_text(m: _re.Match) -> str:
+            method = m.group(1)
+            quote = m.group(2)
+            label_str = m.group(3)
+            return f'{method}(Text("{label_str}", font_size=28)'
+        source = _re.sub(
+            r'(\.get_[xy]_axis_label)\(\s*(["\'])([^"\']*)\2',
+            _axis_label_to_text,
+            source,
+        )
+        # get_axis_labels(x_label="x", y_label="f(x)") → keyword args
+        def _axis_labels_kwargs_to_text(m: _re.Match) -> str:
+            kw = m.group(1)
+            label_str = m.group(3)
+            return f'{kw}=Text("{label_str}", font_size=28)'
+        source = _re.sub(
+            r'([xy]_label)\s*=\s*(["\'])([^"\']*)\2',
+            _axis_labels_kwargs_to_text,
+            source,
+        )
+        # get_axis_labels("x", "f(x)") → positional string args
+        def _get_axis_labels_positional(m: _re.Match) -> str:
+            q1 = m.group(1)
+            s1 = m.group(2)
+            q2 = m.group(3)
+            s2 = m.group(4)
+            return f'get_axis_labels(Text("{s1}", font_size=28), Text("{s2}", font_size=28))'
+        source = _re.sub(
+            r'get_axis_labels\(\s*(["\'])([^"\']*)\1\s*,\s*(["\'])([^"\']*)\3\s*\)',
+            _get_axis_labels_positional,
+            source,
+        )
+
+        # ── get_graph_label: string label arg → Text() ──
+        # get_graph_label(graph, "f(x)") — positional 2nd arg
+        source = _re.sub(
+            r'(\.get_graph_label\(\s*\w[\w.]*\s*,\s*)(["\'])([^"\']*)\2',
+            r'\1Text("\3", font_size=28)',
+            source,
+        )
+        # get_graph_label(..., label="f(x)") — keyword arg
+        source = _re.sub(
+            r'(\.get_graph_label\([^)]*?)label\s*=\s*(["\'])([^"\']*)\2',
+            r'\1label=Text("\3", font_size=28)',
+            source,
+        )
+
+        # ── get_T_label: string label arg → Text() ──
+        # get_T_label(x_val, graph, "label") — positional 3rd arg
+        source = _re.sub(
+            r'(\.get_T_label\(\s*[\w.]+\s*,\s*\w[\w.]*\s*,\s*)(["\'])([^"\']*)\2',
+            r'\1Text("\3", font_size=28)',
+            source,
+        )
+        # get_T_label(..., label="label") — keyword arg
+        source = _re.sub(
+            r'(\.get_T_label\([^)]*?)label\s*=\s*(["\'])([^"\']*)\2',
+            r'\1label=Text("\3", font_size=28)',
             source,
         )
 

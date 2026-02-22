@@ -1,12 +1,26 @@
-"""Pipeline orchestrator -- coordinates all four rendering stages."""
+"""Pipeline orchestrator -- coordinates all four rendering stages.
 
+Stages 1 (Manim rendering) and 2 (voice synthesis) run concurrently because
+voice synthesis only needs narration text, not the rendered video.  Within each
+stage, scenes are processed in parallel using a thread pool.
+
+When LLM-generated Manim code fails to render, the orchestrator asks Claude to
+fix the code based on the error instead of falling back to a static template.
+"""
+
+import json
 import logging
+import os
 import re
 import tempfile
+import threading
 import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable, Optional
+
+import anthropic
 
 from shared.contracts.enums import JobStatus
 from shared.contracts.pipeline_schema import (
@@ -28,12 +42,18 @@ logger = logging.getLogger(__name__)
 
 StatusCallback = Callable[[JobStatus, int], None]
 
-MAX_RENDER_RETRIES = 3
+MAX_RENDER_RETRIES = 4
 MAX_FAILED_SCENES_BEFORE_ABORT = 4
+_CODE_FIX_MODEL = "claude-sonnet-4-20250514"
+
+# Concurrency limits
+MAX_RENDER_WORKERS = 3   # CPU-bound (Manim subprocesses)
+MAX_VOICE_WORKERS = 6    # Network-bound (Fish Audio API)
+MAX_COMPOSITE_WORKERS = 2  # CPU-bound (FFmpeg subprocesses)
 
 
 class PipelineOrchestrator:
-    """Coordinates the four sequential stages of video generation."""
+    """Coordinates video generation with parallel scene processing."""
 
     def __init__(self, status_callback: Optional[StatusCallback] = None):
         self._on_progress = status_callback or (lambda _s, _p: None)
@@ -42,6 +62,10 @@ class PipelineOrchestrator:
         self._voice_synth = VoiceSynthesizer()
         self._compositor = CharacterCompositor()
         self._assembler = VideoAssembler()
+
+    # ------------------------------------------------------------------ #
+    # Main entry point
+    # ------------------------------------------------------------------ #
 
     def run(self, pipeline_input: PipelineInput) -> PipelineOutput:
         """Execute the full pipeline and return a ``PipelineOutput``."""
@@ -59,6 +83,8 @@ class PipelineOrchestrator:
         logger.info("[orchestrator] Total scenes: %d", total_scenes)
         logger.info("[orchestrator] Script title: %s", script.title)
         logger.info("[orchestrator] Output path: %s", pipeline_input.output_path)
+        logger.info("[orchestrator] Parallelism: render=%d, voice=%d, composite=%d",
+                     MAX_RENDER_WORKERS, MAX_VOICE_WORKERS, MAX_COMPOSITE_WORKERS)
         for i, s in enumerate(scenes):
             has_code = bool(s.manim_code)
             logger.info(
@@ -71,87 +97,20 @@ class PipelineOrchestrator:
             tmp = Path(tmpdir)
             logger.info("[orchestrator] Temp directory: %s", tmp)
 
-            # ── Stage 1: Manim rendering ───────────────────────────────── #
-            logger.info("[orchestrator] ══ STAGE 1/4: Manim Rendering ══")
-            self._on_progress(JobStatus.RENDERING_ANIMATIONS, 20)
-            stage_t0 = time.perf_counter()
+            # ── Stages 1+2: Manim rendering & voice synthesis (CONCURRENT) ── #
+            logger.info("[orchestrator] ══ STAGES 1+2: Rendering + Voice (parallel) ══")
+            self._on_progress(JobStatus.RENDERING_ANIMATIONS, 15)
+            stages_12_t0 = time.perf_counter()
 
-            rendered: list[tuple[SceneInstruction, str]] = []
-            failed_scenes: list[tuple[int, str]] = []
-            for idx, scene in enumerate(scenes):
-                scene_t0 = time.perf_counter()
-                logger.info(
-                    "[orchestrator] ── Rendering scene %d/%d (type: %s, hint: %.0fs)",
-                    idx + 1, total_scenes, scene.manim_scene_type,
-                    scene.duration_hint_seconds,
-                )
+            rendered, failed_scenes, audio_clips = self._run_render_and_voice(
+                scenes, character.value, tmp, pipeline_input.voice_id, total_scenes,
+            )
 
-                clip_path = None
-                last_error = ""
-                for attempt in range(1, MAX_RENDER_RETRIES + 1):
-                    try:
-                        clip_path = self._render_scene(scene, tmp, idx, attempt)
-                        break
-                    except Exception as e:
-                        last_error = str(e)
-                        err_lower = last_error.lower()
-                        logger.error(
-                            "[orchestrator] Attempt %d/%d failed for scene %d: %s",
-                            attempt, MAX_RENDER_RETRIES, idx + 1, e,
-                        )
-                        if scene.manim_code:
-                            # Detect LaTeX/rendering errors (dvi, svg, latex, cache, tex)
-                            is_latex_error = any(
-                                kw in err_lower
-                                for kw in ("dvi", "svg", "latex", "cache", "tex(", "typeerror")
-                            )
-                            if is_latex_error and attempt == 1:
-                                sanitized = self._sanitize_latex_to_text(scene.manim_code)
-                                if sanitized != scene.manim_code:
-                                    scene.manim_code = sanitized
-                                    logger.warning(
-                                        "[orchestrator] Scene %d: sanitized Tex→Text, retrying",
-                                        idx + 1,
-                                    )
-                                else:
-                                    scene.manim_code = None
-                                    logger.warning(
-                                        "[orchestrator] Scene %d: sanitization unchanged, falling back to template",
-                                        idx + 1,
-                                    )
-                            else:
-                                # Any other error or repeated failure: drop LLM code
-                                scene.manim_code = None
-                                logger.warning(
-                                    "[orchestrator] Scene %d: LLM code failed (attempt %d), falling back to template",
-                                    idx + 1, attempt,
-                                )
-                        if attempt < MAX_RENDER_RETRIES:
-                            logger.info("[orchestrator] Retrying scene %d...", idx + 1)
-
-                if clip_path:
-                    elapsed = time.perf_counter() - scene_t0
-                    clip_size = Path(clip_path).stat().st_size / (1024 * 1024)
-                    rendered.append((scene, clip_path))
-                    logger.info(
-                        "[orchestrator] ✓ Scene %d OK: %s (%.1f MB, %.1fs)",
-                        idx + 1, clip_path, clip_size, elapsed,
-                    )
-                else:
-                    elapsed = time.perf_counter() - scene_t0
-                    failed_scenes.append((idx + 1, last_error))
-                    logger.error(
-                        "[orchestrator] ✗ Scene %d FAILED after %d attempts (%.1fs): %s",
-                        idx + 1, MAX_RENDER_RETRIES, elapsed, last_error[:200],
-                    )
-
-                pct = 20 + int(((idx + 1) / total_scenes) * 20)
-                self._on_progress(JobStatus.RENDERING_ANIMATIONS, pct)
-
-            stage_elapsed = time.perf_counter() - stage_t0
+            stages_12_elapsed = time.perf_counter() - stages_12_t0
             logger.info(
-                "[orchestrator] Stage 1 complete: %d/%d rendered, %d failed (%.1fs)",
-                len(rendered), total_scenes, len(failed_scenes), stage_elapsed,
+                "[orchestrator] Stages 1+2 complete: %d/%d rendered, %d failed, %d audio (%.1fs)",
+                len(rendered), total_scenes, len(failed_scenes), len(audio_clips),
+                stages_12_elapsed,
             )
             if failed_scenes:
                 for scene_num, err in failed_scenes:
@@ -169,88 +128,28 @@ class PipelineOrchestrator:
                     "scene renders failed."
                 )
 
-            # ── Stage 2: Voice synthesis ────────────────────────────────── #
-            logger.info("[orchestrator] ══ STAGE 2/4: Voice Synthesis ══")
-            self._on_progress(JobStatus.SYNTHESIZING_VOICE, 40)
-            stage_t0 = time.perf_counter()
-
-            audio_clips: list[str] = []
-            for idx, (scene, _clip) in enumerate(rendered):
-                voice_t0 = time.perf_counter()
-                audio_path = str(tmp / f"voice_{idx:03d}.wav")
-                logger.info(
-                    "[orchestrator] Synthesizing voice %d/%d: %d chars",
-                    idx + 1, len(rendered), len(scene.narration_text),
-                )
-                try:
-                    self._voice_synth.synthesize(
-                        text=scene.narration_text,
-                        character_id=character.value,
-                        output_path=audio_path,
-                        voice_id=pipeline_input.voice_id,
-                    )
-                    audio_size = Path(audio_path).stat().st_size / 1024
-                    elapsed = time.perf_counter() - voice_t0
-                    audio_clips.append(audio_path)
-                    logger.info(
-                        "[orchestrator] ✓ Voice %d OK: %.1f KB, %.1fs",
-                        idx + 1, audio_size, elapsed,
-                    )
-                except Exception as e:
-                    logger.error("[orchestrator] ✗ Voice %d FAILED: %s", idx + 1, e)
-                    logger.error("[orchestrator]   Traceback:\n%s", traceback.format_exc())
-                    raise
-                pct = 40 + int(((idx + 1) / len(rendered)) * 20)
-                self._on_progress(JobStatus.SYNTHESIZING_VOICE, pct)
-
-            stage_elapsed = time.perf_counter() - stage_t0
-            logger.info("[orchestrator] Stage 2 complete: %d audio clips (%.1fs)", len(audio_clips), stage_elapsed)
-
-            # ── Stage 3: Character overlay ──────────────────────────────── #
-            logger.info("[orchestrator] ══ STAGE 3/4: Character Overlay ══")
+            # ── Stage 3: Character overlay (parallel) ────────────────────── #
+            logger.info("[orchestrator] ══ STAGE 3/4: Character Overlay (parallel) ══")
             self._on_progress(JobStatus.COMPOSITING, 60)
-            stage_t0 = time.perf_counter()
+            stage3_t0 = time.perf_counter()
 
-            composited_clips: list[str] = []
-            for idx, (scene, anim_clip) in enumerate(rendered):
-                comp_t0 = time.perf_counter()
-                sprite_path = get_sprite_path(character.value, scene.character_action)
-                composited_path = str(tmp / f"composited_{idx:03d}.mp4")
-                logger.info(
-                    "[orchestrator] Compositing scene %d/%d", idx + 1, len(rendered),
-                )
-                try:
-                    self._compositor.composite(
-                        animation_clip=anim_clip,
-                        character_sprite=sprite_path,
-                        audio_file=audio_clips[idx],
-                        output_path=composited_path,
-                    )
-                    comp_size = Path(composited_path).stat().st_size / (1024 * 1024)
-                    elapsed = time.perf_counter() - comp_t0
-                    composited_clips.append(composited_path)
-                    logger.info(
-                        "[orchestrator] ✓ Composite %d OK: %.1f MB, %.1fs",
-                        idx + 1, comp_size, elapsed,
-                    )
-                except Exception as e:
-                    logger.error("[orchestrator] ✗ Composite %d FAILED: %s", idx + 1, e)
-                    logger.error("[orchestrator]   Traceback:\n%s", traceback.format_exc())
-                    raise
-                pct = 60 + int(((idx + 1) / len(rendered)) * 20)
-                self._on_progress(JobStatus.COMPOSITING, pct)
+            composited_clips = self._run_compositing(
+                rendered, audio_clips, character.value, tmp,
+            )
 
-            stage_elapsed = time.perf_counter() - stage_t0
-            logger.info("[orchestrator] Stage 3 complete: %d clips (%.1fs)", len(composited_clips), stage_elapsed)
+            stage3_elapsed = time.perf_counter() - stage3_t0
+            logger.info("[orchestrator] Stage 3 complete: %d clips (%.1fs)",
+                        len(composited_clips), stage3_elapsed)
 
             # ── Stage 4: Final assembly ──────────────────────────────────── #
             logger.info("[orchestrator] ══ STAGE 4/4: Final Assembly ══")
             self._on_progress(JobStatus.ASSEMBLING, 80)
-            stage_t0 = time.perf_counter()
+            stage4_t0 = time.perf_counter()
 
             output_path = pipeline_input.output_path
             Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-            logger.info("[orchestrator] Assembling %d clips -> %s", len(composited_clips), output_path)
+            logger.info("[orchestrator] Assembling %d clips -> %s",
+                        len(composited_clips), output_path)
 
             try:
                 self._assembler.assemble(
@@ -264,8 +163,8 @@ class PipelineOrchestrator:
                 raise
 
             self._on_progress(JobStatus.ASSEMBLING, 95)
-            stage_elapsed = time.perf_counter() - stage_t0
-            logger.info("[orchestrator] Stage 4 complete (%.1fs)", stage_elapsed)
+            stage4_elapsed = time.perf_counter() - stage4_t0
+            logger.info("[orchestrator] Stage 4 complete (%.1fs)", stage4_elapsed)
 
             # ── Compute final duration ───────────────────────────────────── #
             try:
@@ -291,6 +190,308 @@ class PipelineOrchestrator:
             video_path=output_path,
             duration_seconds=duration,
         )
+
+    # ------------------------------------------------------------------ #
+    # Stages 1+2: Rendering + Voice (concurrent)
+    # ------------------------------------------------------------------ #
+
+    def _run_render_and_voice(
+        self,
+        scenes: list,
+        character_id: str,
+        tmp: Path,
+        voice_id: Optional[str],
+        total_scenes: int,
+    ) -> tuple[list[tuple[SceneInstruction, str]], list[tuple[int, str]], list[str]]:
+        """Run Manim rendering and voice synthesis concurrently.
+
+        Returns (rendered, failed_scenes, audio_clips) where:
+        - rendered: list of (scene, clip_path) for successfully rendered scenes
+        - failed_scenes: list of (scene_number, error_message)
+        - audio_clips: dict mapping scene index -> audio file path
+        """
+        # Results storage (thread-safe via GIL for simple appends)
+        render_results: dict[int, Optional[str]] = {}  # idx -> clip_path or None
+        render_errors: dict[int, str] = {}              # idx -> error message
+        voice_results: dict[int, str] = {}              # idx -> audio_path
+        voice_errors: dict[int, Exception] = {}         # idx -> exception
+
+        progress_lock = threading.Lock()
+        completed_renders = [0]
+        completed_voices = [0]
+
+        def _update_combined_progress():
+            with progress_lock:
+                render_pct = completed_renders[0] / total_scenes
+                voice_pct = completed_voices[0] / total_scenes
+                # Stages 1+2 occupy progress range 15-55%
+                combined = 15 + int((render_pct * 0.6 + voice_pct * 0.4) * 40)
+                if render_pct < 1.0:
+                    self._on_progress(JobStatus.RENDERING_ANIMATIONS, combined)
+                else:
+                    self._on_progress(JobStatus.SYNTHESIZING_VOICE, combined)
+
+        pool_size = MAX_RENDER_WORKERS + MAX_VOICE_WORKERS
+        # Use a semaphore to limit concurrent Manim renders (CPU-bound)
+        render_semaphore = threading.Semaphore(MAX_RENDER_WORKERS)
+
+        with ThreadPoolExecutor(max_workers=pool_size) as pool:
+            # Submit render jobs
+            def _render_job(idx, scene):
+                with render_semaphore:
+                    return self._render_scene_with_retries(scene, tmp, idx, total_scenes)
+
+            render_futures = {
+                pool.submit(_render_job, idx, scene): idx
+                for idx, scene in enumerate(scenes)
+            }
+
+            # Submit voice jobs (all at once — network-bound)
+            voice_futures = {
+                pool.submit(
+                    self._synthesize_one_voice,
+                    scene, character_id, tmp, idx, voice_id, total_scenes,
+                ): idx
+                for idx, scene in enumerate(scenes)
+            }
+
+            # Collect render results
+            for future in as_completed(render_futures):
+                idx = render_futures[future]
+                try:
+                    clip_path = future.result()
+                    render_results[idx] = clip_path
+                except Exception as e:
+                    render_results[idx] = None
+                    render_errors[idx] = str(e)
+                completed_renders[0] += 1
+                _update_combined_progress()
+
+            # Collect voice results
+            for future in as_completed(voice_futures):
+                idx = voice_futures[future]
+                try:
+                    audio_path = future.result()
+                    voice_results[idx] = audio_path
+                except Exception as e:
+                    voice_errors[idx] = e
+                completed_voices[0] += 1
+                _update_combined_progress()
+
+        # If any voice synthesis failed, raise the first error
+        if voice_errors:
+            first_idx = min(voice_errors.keys())
+            exc = voice_errors[first_idx]
+            logger.error("[orchestrator] ✗ Voice %d FAILED: %s", first_idx + 1, exc)
+            raise exc
+
+        # Build ordered results (only include scenes that rendered successfully)
+        rendered: list[tuple[SceneInstruction, str]] = []
+        failed_scenes: list[tuple[int, str]] = []
+        audio_clips: list[str] = []
+
+        for idx in range(total_scenes):
+            clip_path = render_results.get(idx)
+            if clip_path:
+                rendered.append((scenes[idx], clip_path))
+                audio_clips.append(voice_results[idx])
+            else:
+                err = render_errors.get(idx, "Unknown render error")
+                failed_scenes.append((idx + 1, err))
+
+        return rendered, failed_scenes, audio_clips
+
+    def _render_scene_with_retries(
+        self, scene: SceneInstruction, tmp: Path, idx: int, total_scenes: int,
+    ) -> str:
+        """Render a single scene with retry logic.
+
+        Retry strategy (NEVER falls back to static templates):
+          1. Try the original LLM code
+          2. If LaTeX error → sanitize MathTex→Text, retry
+          3. If any error → ask Claude to fix the code based on the error, retry
+          4. Last attempt with the LLM-fixed code
+        """
+        scene_t0 = time.perf_counter()
+        logger.info(
+            "[orchestrator] ── Rendering scene %d/%d (type: %s, hint: %.0fs)",
+            idx + 1, total_scenes, scene.manim_scene_type,
+            scene.duration_hint_seconds,
+        )
+
+        clip_path = None
+        last_error = ""
+        original_code = scene.manim_code  # preserve original for LLM repair context
+
+        for attempt in range(1, MAX_RENDER_RETRIES + 1):
+            try:
+                clip_path = self._render_scene(scene, tmp, idx, attempt)
+                break
+            except Exception as e:
+                last_error = str(e)
+                err_lower = last_error.lower()
+                logger.error(
+                    "[orchestrator] Attempt %d/%d failed for scene %d: %s",
+                    attempt, MAX_RENDER_RETRIES, idx + 1, e,
+                )
+
+                if not scene.manim_code:
+                    # No code to fix — shouldn't happen but bail
+                    break
+
+                if attempt == 1:
+                    # First failure: try sanitizing LaTeX → Text
+                    is_latex_error = any(
+                        kw in err_lower
+                        for kw in ("dvi", "svg", "latex", "cache", "tex(")
+                    )
+                    if is_latex_error:
+                        sanitized = self._sanitize_latex_to_text(scene.manim_code)
+                        if sanitized != scene.manim_code:
+                            scene.manim_code = sanitized
+                            logger.warning(
+                                "[orchestrator] Scene %d: sanitized Tex→Text, retrying",
+                                idx + 1,
+                            )
+                        else:
+                            # Sanitization didn't change anything — go straight to LLM fix
+                            fixed = self._fix_code_with_llm(
+                                scene.manim_code, last_error, idx + 1,
+                            )
+                            if fixed:
+                                scene.manim_code = fixed
+                    else:
+                        # Non-LaTeX error — ask Claude to fix the code
+                        fixed = self._fix_code_with_llm(
+                            scene.manim_code, last_error, idx + 1,
+                        )
+                        if fixed:
+                            scene.manim_code = fixed
+                elif attempt == 2:
+                    # Second failure — ask Claude to fix (using error from this attempt)
+                    fixed = self._fix_code_with_llm(
+                        scene.manim_code, last_error, idx + 1,
+                    )
+                    if fixed:
+                        scene.manim_code = fixed
+                # attempt 3+ just retries with whatever code we have
+
+                if attempt < MAX_RENDER_RETRIES:
+                    logger.info("[orchestrator] Retrying scene %d (attempt %d)...",
+                                idx + 1, attempt + 1)
+
+        if clip_path:
+            elapsed = time.perf_counter() - scene_t0
+            clip_size = Path(clip_path).stat().st_size / (1024 * 1024)
+            logger.info(
+                "[orchestrator] ✓ Scene %d OK: %s (%.1f MB, %.1fs)",
+                idx + 1, clip_path, clip_size, elapsed,
+            )
+            return clip_path
+        else:
+            elapsed = time.perf_counter() - scene_t0
+            logger.error(
+                "[orchestrator] ✗ Scene %d FAILED after %d attempts (%.1fs): %s",
+                idx + 1, MAX_RENDER_RETRIES, elapsed, last_error[:200],
+            )
+            raise RuntimeError(
+                f"Scene {idx + 1} failed after {MAX_RENDER_RETRIES} attempts: {last_error[:200]}"
+            )
+
+    def _synthesize_one_voice(
+        self,
+        scene: SceneInstruction,
+        character_id: str,
+        tmp: Path,
+        idx: int,
+        voice_id: Optional[str],
+        total_scenes: int,
+    ) -> str:
+        """Synthesize voice for a single scene. Returns audio file path."""
+        voice_t0 = time.perf_counter()
+        audio_path = str(tmp / f"voice_{idx:03d}.wav")
+        logger.info(
+            "[orchestrator] Synthesizing voice %d/%d: %d chars",
+            idx + 1, total_scenes, len(scene.narration_text),
+        )
+        try:
+            self._voice_synth.synthesize(
+                text=scene.narration_text,
+                character_id=character_id,
+                output_path=audio_path,
+                voice_id=voice_id,
+            )
+            audio_size = Path(audio_path).stat().st_size / 1024
+            elapsed = time.perf_counter() - voice_t0
+            logger.info(
+                "[orchestrator] ✓ Voice %d OK: %.1f KB, %.1fs",
+                idx + 1, audio_size, elapsed,
+            )
+            return audio_path
+        except Exception as e:
+            logger.error("[orchestrator] ✗ Voice %d FAILED: %s", idx + 1, e)
+            logger.error("[orchestrator]   Traceback:\n%s", traceback.format_exc())
+            raise
+
+    # ------------------------------------------------------------------ #
+    # Stage 3: Compositing (parallel)
+    # ------------------------------------------------------------------ #
+
+    def _run_compositing(
+        self,
+        rendered: list[tuple[SceneInstruction, str]],
+        audio_clips: list[str],
+        character_id: str,
+        tmp: Path,
+    ) -> list[str]:
+        """Composite all scenes in parallel. Returns ordered list of clip paths."""
+        total = len(rendered)
+        results: dict[int, str] = {}
+        progress_lock = threading.Lock()
+        completed = [0]
+
+        def _composite_one(idx: int) -> tuple[int, str]:
+            scene, anim_clip = rendered[idx]
+            comp_t0 = time.perf_counter()
+            sprite_path = get_sprite_path(character_id, scene.character_action)
+            composited_path = str(tmp / f"composited_{idx:03d}.mp4")
+            logger.info("[orchestrator] Compositing scene %d/%d", idx + 1, total)
+            self._compositor.composite(
+                animation_clip=anim_clip,
+                character_sprite=sprite_path,
+                audio_file=audio_clips[idx],
+                output_path=composited_path,
+            )
+            comp_size = Path(composited_path).stat().st_size / (1024 * 1024)
+            elapsed = time.perf_counter() - comp_t0
+            logger.info(
+                "[orchestrator] ✓ Composite %d OK: %.1f MB, %.1fs",
+                idx + 1, comp_size, elapsed,
+            )
+            return idx, composited_path
+
+        with ThreadPoolExecutor(max_workers=MAX_COMPOSITE_WORKERS) as pool:
+            futures = {pool.submit(_composite_one, idx): idx for idx in range(total)}
+            for future in as_completed(futures):
+                idx = futures[future]
+                try:
+                    scene_idx, path = future.result()
+                    results[scene_idx] = path
+                except Exception as e:
+                    logger.error("[orchestrator] ✗ Composite %d FAILED: %s", idx + 1, e)
+                    logger.error("[orchestrator]   Traceback:\n%s", traceback.format_exc())
+                    raise
+                with progress_lock:
+                    completed[0] += 1
+                    pct = 60 + int((completed[0] / total) * 20)
+                    self._on_progress(JobStatus.COMPOSITING, pct)
+
+        # Return in scene order
+        return [results[i] for i in range(total)]
+
+    # ------------------------------------------------------------------ #
+    # Scene rendering helpers
+    # ------------------------------------------------------------------ #
 
     @staticmethod
     def _sanitize_latex_to_text(code: str) -> str:
@@ -330,3 +531,111 @@ class PipelineOrchestrator:
         logger.info("[orchestrator] Built scene class: %s", class_name)
         clip_path = self._renderer.render_scene(scene_py, class_name)
         return clip_path
+
+    # ------------------------------------------------------------------ #
+    # LLM code repair (replaces static template fallback)
+    # ------------------------------------------------------------------ #
+
+    def _fix_code_with_llm(
+        self, broken_code: str, error_message: str, scene_num: int,
+    ) -> Optional[str]:
+        """Ask Claude to fix broken ManimCE code based on the error.
+
+        Returns the fixed code string, or None if the API call fails.
+        """
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            logger.warning("[orchestrator] No ANTHROPIC_API_KEY — cannot call LLM for code fix")
+            return None
+
+        logger.info(
+            "[orchestrator] Asking LLM to fix scene %d code (%d chars, error: %.120s...)",
+            scene_num, len(broken_code), error_message,
+        )
+
+        system_prompt = (
+            "You are a ManimCE (Community Edition) code repair expert.\n"
+            "You will receive broken ManimCE Python code and the error it produced.\n"
+            "Fix the code so it renders successfully.\n\n"
+            "CRITICAL RULES:\n"
+            "- Use ONLY `from manim import *` — never manimlib or manimgl.\n"
+            "- The scene class MUST be named exactly `GeneratedScene` and extend `Scene`.\n"
+            "- The `construct(self)` method must contain all animation logic.\n"
+            "- NEVER use `MathTex(...)`, `Tex(...)`, or any LaTeX-based text.\n"
+            "  ALWAYS use `Text(...)` for ALL text rendering. LaTeX is NOT available.\n"
+            "  For math expressions, use Unicode: x², x₁, √, π, Σ, ∫, →, etc.\n"
+            "- All text objects MUST have `font_size=36` or smaller.\n"
+            "- After creating any text: `text.set_width(min(text.width, 10.0))`\n"
+            "- Use `Create()` instead of `ShowCreation()`.\n"
+            "- Use `axes = Axes(...)` not `axes = ThreeDAxes(...)` unless 3D is needed.\n"
+            "- End every scene with `self.wait(1)`.\n"
+            "- Do NOT use `TransformMatchingTex` — use `ReplacementTransform` instead.\n"
+            "- Do NOT use `VMobject.set_stroke_width()` with 0 args.\n"
+            "- FadeOut everything at the end before self.wait: "
+            "`self.play(*[FadeOut(m) for m in self.mobjects])`\n"
+            "- Keep it simple: avoid complex layouts, 3D cameras, or advanced features.\n"
+            "- Do NOT import any manim plugins (from manim_* import ...).\n"
+            "- For axis labels: pass Text() objects, NOT strings. Strings trigger hidden LaTeX.\n"
+            "  WRONG: axes.get_x_axis_label('x')\n"
+            "  RIGHT: axes.get_x_axis_label(Text('x', font_size=28))\n"
+            "- For graph labels: use Text().next_to() instead of get_graph_label() with strings.\n"
+            "  WRONG: axes.get_graph_label(graph, 'f(x)')\n"
+            "  RIGHT: Text('f(x)', font_size=28).next_to(axes.c2p(2, 4), RIGHT)\n"
+            "- NEVER pass bare strings to get_graph_label(), get_T_label(), or any axes method.\n"
+            "  These methods internally create MathTex which crashes without LaTeX.\n"
+            "- The code must be COMPLETE and SELF-CONTAINED.\n\n"
+            "Return ONLY the fixed Python code — no markdown fences, no explanation, "
+            "no ```python blocks. Just raw Python code starting with `from manim import *`."
+        )
+
+        user_message = (
+            f"This ManimCE code for scene {scene_num} failed to render.\n\n"
+            f"ERROR:\n{error_message[:1500]}\n\n"
+            f"BROKEN CODE:\n{broken_code}"
+        )
+
+        try:
+            client = anthropic.Anthropic(api_key=api_key)
+            t0 = time.perf_counter()
+            response = client.messages.create(
+                model=_CODE_FIX_MODEL,
+                max_tokens=4096,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_message}],
+            )
+            elapsed = time.perf_counter() - t0
+
+            fixed_code = response.content[0].text.strip()
+
+            # Strip markdown fences if the model included them anyway
+            if fixed_code.startswith("```"):
+                lines = fixed_code.split("\n")
+                # Remove first line (```python) and last line (```)
+                if lines[-1].strip() == "```":
+                    lines = lines[1:-1]
+                else:
+                    lines = lines[1:]
+                fixed_code = "\n".join(lines).strip()
+
+            # Basic sanity checks
+            if "from manim import" not in fixed_code:
+                logger.warning("[orchestrator] LLM fix missing 'from manim import' — discarding")
+                return None
+            if "class GeneratedScene" not in fixed_code:
+                logger.warning("[orchestrator] LLM fix missing 'class GeneratedScene' — discarding")
+                return None
+            if "def construct" not in fixed_code:
+                logger.warning("[orchestrator] LLM fix missing 'def construct' — discarding")
+                return None
+
+            logger.info(
+                "[orchestrator] LLM fix for scene %d: %d chars (%.1fs, model=%s)",
+                scene_num, len(fixed_code), elapsed, _CODE_FIX_MODEL,
+            )
+            return fixed_code
+
+        except Exception as exc:
+            logger.error(
+                "[orchestrator] LLM code fix failed for scene %d: %s", scene_num, exc,
+            )
+            return None

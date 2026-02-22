@@ -50,6 +50,10 @@ class SceneBuilder:
 
         source = self._sanitize_code(source)
 
+        # Always convert MathTex/Tex → Text to prevent LaTeX compilation errors.
+        # This runs BEFORE AST validation so the resulting code is valid Python.
+        source = self._replace_latex_with_text(source)
+
         class_name = self._extract_class_name(source)
         if not class_name:
             expected = f"Scene{scene.scene_index:03d}"
@@ -67,7 +71,7 @@ class SceneBuilder:
         errors = self._validate_ast(source)
         if errors:
             logger.warning("[scene_builder] │  AST validation issues: %s", errors)
-            logger.info("[scene_builder] │  Attempting auto-fix before fallback...")
+            logger.info("[scene_builder] │  Attempting auto-fix...")
             source = self._auto_fix_code(source)
             # Re-extract class name after patching (import line may have changed)
             patched_class = self._extract_class_name(source)
@@ -76,8 +80,11 @@ class SceneBuilder:
             errors = self._validate_ast(source)
             if errors:
                 logger.error("[scene_builder] │  Auto-fix did not resolve: %s", errors)
-                logger.info("[scene_builder] │  Falling back to template")
-                return self._build_fallback(scene)
+                # Raise so the orchestrator retries with LLM code repair
+                # instead of silently falling back to a static template.
+                raise ValueError(
+                    f"LLM-generated code has AST errors after auto-fix: {errors}"
+                )
             logger.info("[scene_builder] │  Auto-fix resolved all issues")
 
         return source, class_name

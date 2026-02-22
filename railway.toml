@@ -1,0 +1,15 @@
+# Railway deployment config for the pipeline worker service.
+# The frontend and backend run outside Railway.
+
+[build]
+# Build context is the project root (needed for shared/ and backend/ imports)
+dockerfilePath = "pipeline/Dockerfile"
+
+[deploy]
+# No HTTP port — this is a background Celery worker, not a web server
+numReplicas = 1
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
+
+# Health check disabled (worker has no HTTP endpoint)
+healthcheckPath = ""
