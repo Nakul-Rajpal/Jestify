@@ -5,7 +5,7 @@ class Character(str, Enum):
     LEBRON = "lebron"
     GOKU = "goku"
     PETER = "peter"
-    ROGAN = "rogan"
+    ALYSA = "alysa"
 
 
 class Difficulty(str, Enum):

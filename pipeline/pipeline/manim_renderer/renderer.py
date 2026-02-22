@@ -1,7 +1,7 @@
 """Renders Manim scene files into MP4 clips.
 
-Uses ManimGL (3Blue1Brown's fork) as the primary engine.  A CE→GL
-compatibility patch auto-corrects common ManimCE patterns before render.
+Uses ManimCE (Community Edition) as the primary engine.  A GL→CE
+compatibility patch auto-corrects common ManimGL patterns before render.
 """
 
 import logging
@@ -22,6 +22,7 @@ class ManimRenderer:
 
     def __init__(self, timeout: int = _RENDER_TIMEOUT_SECONDS):
         self._timeout = timeout
+        self._ensure_texlive_on_path()
         self._engine = self._detect_engine()
         self._check_dependencies()
         self._texmfcnf, self._texmfdist = self._find_tex_paths()
@@ -34,21 +35,39 @@ class ManimRenderer:
             logger.info("[render] TEXMFDIST: %s", self._texmfdist)
             os.environ["TEXMFDIST"] = self._texmfdist
 
-    def _detect_engine(self) -> str:
-        """Detect which Manim engine is available (prefer ManimGL)."""
-        manimgl_path = shutil.which("manimgl")
-        manim_path = shutil.which("manim")
+    @staticmethod
+    def _ensure_texlive_on_path():
+        """Add TeX Live bin directory to PATH if not already present."""
+        tex_bin_dirs = [
+            "/usr/local/texlive/2025/bin/universal-darwin",
+            "/usr/local/texlive/2024/bin/universal-darwin",
+            "/usr/local/texlive/2025/bin/x86_64-linux",
+            "/usr/local/texlive/2024/bin/x86_64-linux",
+            "/Library/TeX/texbin",
+        ]
+        current_path = os.environ.get("PATH", "")
+        for d in tex_bin_dirs:
+            if Path(d).is_dir() and d not in current_path:
+                os.environ["PATH"] = d + ":" + current_path
+                current_path = os.environ["PATH"]
+                logger.info("[render] Added TeX Live to PATH: %s", d)
+                break
 
-        if manimgl_path:
-            logger.info("[render] Detected ManimGL: %s", manimgl_path)
-            return "gl"
-        elif manim_path:
+    def _detect_engine(self) -> str:
+        """Detect which Manim engine is available (prefer ManimCE)."""
+        manim_path = shutil.which("manim")
+        manimgl_path = shutil.which("manimgl")
+
+        if manim_path:
             logger.info("[render] Detected ManimCE: %s", manim_path)
             return "ce"
+        elif manimgl_path:
+            logger.info("[render] Detected ManimGL: %s", manimgl_path)
+            return "gl"
         else:
             raise RuntimeError(
-                "Neither 'manimgl' nor 'manim' (Community Edition) found on PATH. "
-                "Install: pip install manimgl  (recommended) OR  pip install manim"
+                "Neither 'manim' (Community Edition) nor 'manimgl' found on PATH. "
+                "Install: pip install manim  (recommended) OR  pip install manimgl"
             )
 
     def _check_dependencies(self) -> None:
@@ -85,11 +104,11 @@ class ManimRenderer:
         logger.info("[render] │  Source: %d chars, %d lines", len(source), source.count("\n") + 1)
         logger.info("[render] │  Full source:\n%s", source)
 
-        # When running under ManimGL, rewrite ManimCE-specific code
-        if self._engine == "gl":
-            source = self._patch_ce_to_gl(source)
+        # When running under ManimCE, rewrite ManimGL-specific code
+        if self._engine == "ce":
+            source = self._patch_gl_to_ce(source)
             scene_py.write_text(source, encoding="utf-8")
-            logger.info("[render] │  Patched source for ManimGL compatibility")
+            logger.info("[render] │  Patched source for ManimCE compatibility")
 
         if self._engine == "ce":
             cmd = self._build_ce_command(scene_py, class_name, output_dir)
@@ -104,8 +123,6 @@ class ManimRenderer:
             env["TEXMFCNF"] = self._texmfcnf
         if self._texmfdist:
             env["TEXMFDIST"] = self._texmfdist
-        if self._engine == "gl":
-            env["DISPLAY"] = ""
         logger.info("[render] │  TEXMFCNF=%s TEXMFDIST=%s", self._texmfcnf, self._texmfdist)
 
         t0 = time.perf_counter()
@@ -169,7 +186,7 @@ class ManimRenderer:
         return cmd
 
     def _build_gl_command(self, scene_py: Path, class_name: str, output_dir: Path) -> list[str]:
-        """Build command for ManimGL."""
+        """Build command for ManimGL (fallback)."""
         manimgl_path = shutil.which("manimgl")
         cmd = []
         if platform.system() == "Linux" and shutil.which("xvfb-run"):
@@ -216,6 +233,13 @@ class ManimRenderer:
                 texmfcnf = texmfcnf or (str(candidate) + ":")
                 texmfdist = texmfdist or str(candidate.parent)
                 return texmfcnf, texmfdist
+        # Check /usr/local/texlive (MacTeX / manual TeX Live installs)
+        for year in ("2025", "2024", "2023"):
+            web2c = Path(f"/usr/local/texlive/{year}/texmf-dist/web2c")
+            if (web2c / "texmf.cnf").exists():
+                texmfcnf = texmfcnf or (str(web2c) + ":")
+                texmfdist = texmfdist or str(web2c.parent)
+                return texmfcnf, texmfdist
         return texmfcnf, texmfdist
 
     @staticmethod
@@ -248,7 +272,7 @@ class ManimRenderer:
 
     @staticmethod
     def _extract_traceback(stderr: str) -> str:
-        """Extract the Python traceback from ManimGL stderr, ignoring progress bars."""
+        """Extract the Python traceback from Manim stderr, ignoring progress bars."""
         lines = stderr.split("\n")
         tb_start = -1
         for i, line in enumerate(lines):
@@ -259,82 +283,44 @@ class ManimRenderer:
         return stderr.strip()[-500:]
 
     @staticmethod
-    def _patch_ce_to_gl(source: str) -> str:
-        """Rewrite ManimCE-specific code to work with ManimGL.
+    def _patch_gl_to_ce(source: str) -> str:
+        """Rewrite ManimGL-specific code to work with ManimCE.
 
-        This is a safety net — the LLM prompt already targets ManimGL, but if
-        any CE patterns slip through, this patch fixes them before render.
+        This is a safety net — the LLM prompt already targets ManimCE, but if
+        any GL patterns slip through, this patch fixes them before render.
         """
         import re as _re
 
         # ── Imports ──────────────────────────────────────────────────────
-        source = source.replace("from manim import *", "from manimlib import *")
-        source = source.replace("from manim import ", "from manimlib import ")
+        source = source.replace("from manimlib import *", "from manim import *")
+        source = source.replace("from manimlib import ", "from manim import ")
 
         # Ensure numpy import (many scenes use np)
         if "import numpy" not in source:
             source = source.replace(
-                "from manimlib import *",
-                "from manimlib import *\nimport numpy as np",
+                "from manim import *",
+                "from manim import *\nimport numpy as np",
                 1,
             )
 
-        # ── Animation renames (CE → GL) ─────────────────────────────────
-        source = _re.sub(r'\bCreate\(', 'ShowCreation(', source)
-        source = _re.sub(r'\bCircumscribe\(', 'Indicate(', source)
-        source = _re.sub(r'\bUnwrite\(', 'Uncreate(', source)
-        source = _re.sub(r'\bWiggle\(', 'WiggleOutThenIn(', source)
+        # ── Animation renames (GL → CE) ─────────────────────────────────
+        source = _re.sub(r'\bShowCreation\(', 'Create(', source)
+        source = _re.sub(r'\bUncreate\(', 'Unwrite(', source)
+        source = _re.sub(r'\bWiggleOutThenIn\(', 'Wiggle(', source)
 
-        # ── MathTex → Tex ────────────────────────────────────────────────
-        source = _re.sub(r'\bMathTex\(', 'Tex(', source)
+        # ── axes.get_graph() → axes.plot() ──────────────────────────────
+        source = _re.sub(r'\.get_graph\(', '.plot(', source)
 
-        # ── axes.plot() → axes.get_graph() ───────────────────────────────
-        source = _re.sub(r'\.plot\(', '.get_graph(', source)
-
-        # ── Strip x_length / y_length from Axes() ───────────────────────
-        # ManimGL's Axes doesn't accept these; it uses x_range/y_range only.
-        source = _re.sub(r',\s*x_length\s*=\s*[\d.]+', '', source)
-        source = _re.sub(r',\s*y_length\s*=\s*[\d.]+', '', source)
-        source = _re.sub(r'x_length\s*=\s*[\d.]+\s*,\s*', '', source)
-        source = _re.sub(r'y_length\s*=\s*[\d.]+\s*,\s*', '', source)
-
-        # ── Strip tips=False from Axes() (not supported in ManimGL) ─────
-        source = _re.sub(r',\s*tips\s*=\s*(?:True|False)', '', source)
-        source = _re.sub(r'tips\s*=\s*(?:True|False)\s*,\s*', '', source)
-
-        # ── Fix Tex() constructor kwargs ─────────────────────────────────
-        # ManimGL's Tex() doesn't accept color= or font_size=.
-        # Convert: Tex(r"...", color=BLUE) → Tex(r"...").set_color(BLUE)
-        # Convert: Tex(r"...", font_size=N) → Tex(r"...").scale(N/36)
-        def _fix_tex_kwargs(m: _re.Match) -> str:
-            prefix = m.group(1)  # Tex( or TexText(
-            content = m.group(2)  # everything inside parens
-
-            color_match = _re.search(r',\s*color\s*=\s*([A-Z_]+)', content)
-            fontsize_match = _re.search(r',\s*font_size\s*=\s*(\d+)', content)
-
-            # Remove the kwargs from constructor
-            cleaned = _re.sub(r',\s*color\s*=\s*[A-Z_]+', '', content)
-            cleaned = _re.sub(r',\s*font_size\s*=\s*\d+', '', cleaned)
-
-            result = f"{prefix}{cleaned})"
-            if color_match:
-                result += f".set_color({color_match.group(1)})"
-            if fontsize_match:
-                fs = max(int(fontsize_match.group(1)), 24)
-                scale = round(fs / 36, 2)
-                if scale != 1.0:
-                    result += f".scale({scale})"
-            return result
-
+        # ── Remove ManimGL-specific self.camera.background_color lines ──
+        # ManimCE handles background via config or Scene defaults
         source = _re.sub(
-            r'((?:Tex|TexText)\s*\()([^)]*(?:color\s*=|font_size\s*=)[^)]*)\)',
-            _fix_tex_kwargs,
+            r'^[ \t]*self\.camera\.background_color\s*=\s*\w+\s*\n?',
+            '',
             source,
+            flags=_re.MULTILINE,
         )
 
         # ── Enforce minimum font_size ────────────────────────────────────
-        # Replace any font_size below 24 with 24
         def _floor_fontsize(m: _re.Match) -> str:
             fs = int(m.group(1))
             return f"font_size={max(fs, 24)}"
@@ -348,81 +334,8 @@ class ManimRenderer:
 
         source = _re.sub(r'\.scale\(\s*(0\.\d+)\s*\)', _floor_scale, source)
 
-        # ── Strip axis_config={...} from Axes() ─────────────────────────
-        # ManimGL Axes doesn't accept axis_config dicts
-        # Handle nested dicts with a non-greedy match up to the matching }
-        source = _re.sub(
-            r',\s*axis_config\s*=\s*\{[^}]*\}', '', source
-        )
-        source = _re.sub(
-            r'axis_config\s*=\s*\{[^}]*\}\s*,?\s*', '', source
-        )
-
-        # ── Strip include_numbers / include_tip from Axes() ─────────────
-        source = _re.sub(r',\s*include_numbers\s*=\s*(?:True|False)', '', source)
-        source = _re.sub(r'include_numbers\s*=\s*(?:True|False)\s*,?\s*', '', source)
-        source = _re.sub(r',\s*include_tip\s*=\s*(?:True|False)', '', source)
-        source = _re.sub(r'include_tip\s*=\s*(?:True|False)\s*,?\s*', '', source)
-
-        # ── Replace .get_axis_labels() with VGroup() (preserve indentation) ─
-        source = _re.sub(
-            r'^([ \t]*\w+\s*=\s*)\w+\.get_axis_labels\([^)]*\)',
-            r'\1VGroup()',
-            source,
-            flags=_re.MULTILINE,
-        )
-
-        # ── Strip .add_coordinates() calls (replace line with pass) ──────
-        source = _re.sub(
-            r'^([ \t]*)\w+\.add_coordinates\([^)]*\)',
-            r'\1pass  # add_coordinates removed',
-            source,
-            flags=_re.MULTILINE,
-        )
-
-        # ── Replace axes.get_area() with VMobject() (preserve indentation) ─
-        source = _re.sub(
-            r'^([ \t]*\w+\s*=\s*)\w+\.get_area\([^)]*\)',
-            r'\1VMobject()',
-            source,
-            flags=_re.MULTILINE,
-        )
-
-        # ── Enforce Axes scaling so graphs fit within the frame ──────────
-        # Find `var = Axes(...)` lines and inject .set_height/.set_width
-        # if the code doesn't already scale them.
-        def _inject_axes_scaling(m: _re.Match) -> str:
-            indent = m.group(1)
-            var_name = m.group(2)
-            axes_call = m.group(3)
-            rest_of_line = m.group(4) if m.group(4) else ""
-            line = f"{indent}{var_name} = {axes_call}{rest_of_line}"
-            if "set_height" not in rest_of_line and "set_width" not in rest_of_line:
-                line += f"\n{indent}{var_name}.set_height(5.0).set_width(10.0)"
-            return line
-
-        source = _re.sub(
-            r'^([ \t]*)(\w+)\s*=\s*(Axes\([^)]*\))(.*?)$',
-            _inject_axes_scaling,
-            source,
-            flags=_re.MULTILINE,
-        )
-
         # ── Remove plugin imports (from manim_* import ...) ──────────────
         source = _re.sub(r'^from\s+manim_\w+\s+import\s+.*$', '# removed plugin import', source, flags=_re.MULTILINE)
-
-        # ── Remove always_redraw() lines entirely ─────────────────────────
-        # always_redraw is not in ManimGL; comment out the entire line
-        source = _re.sub(
-            r'^([ \t]*)(\w+\s*=\s*always_redraw\s*\(.*\))',
-            r'\1pass  # removed: \2',
-            source,
-            flags=_re.MULTILINE,
-        )
-
-        # ── Strip num_decimal_places from DecimalNumber ──────────────────
-        source = _re.sub(r',\s*num_decimal_places\s*=\s*\d+', '', source)
-        source = _re.sub(r'num_decimal_places\s*=\s*\d+\s*,\s*', '', source)
 
         # ── Guard unguarded lambda division: 1/x → safe version ──────────
         def _guard_division(m: _re.Match) -> str:
@@ -436,14 +349,69 @@ class ManimRenderer:
             source,
         )
 
-        # ── Inject self.camera.background_color = BLACK if missing ────────
-        if 'def construct(self)' in source and 'background_color' not in source:
-            source = _re.sub(
-                r'(def construct\(self\):\s*\n)',
-                r'\1        self.camera.background_color = BLACK\n',
-                source,
-                count=1,
-            )
+        # ── LAYOUT ENFORCEMENT ───────────────────────────────────────────
+
+        # Cap Text/MathTex width after assignment:
+        #   var = Text(...)  →  var = Text(...)\n  var.set(width=min(var.width, 10.0))
+        def _inject_text_width_cap(m: _re.Match) -> str:
+            indent = m.group(1)
+            var = m.group(2)
+            rest = m.group(3)
+            line = f"{indent}{var} = {rest}"
+            # Don't double-inject if already capped
+            if "set_width" not in rest and "set(width" not in rest:
+                line += f"\n{indent}{var}.set(width=min({var}.width, 10.0))"
+            return line
+
+        source = _re.sub(
+            r'^([ \t]+)(\w+)\s*=\s*((?:Text|MathTex)\s*\([^)]*\)(?:\.[a-z_]+\([^)]*\))*)\s*$',
+            _inject_text_width_cap,
+            source,
+            flags=_re.MULTILINE,
+        )
+
+        # Cap VGroup height after .arrange():
+        #   group.arrange(DOWN, ...)  →  group.arrange(DOWN, ...)\n  group.set(height=min(group.height, 5.5))
+        def _inject_vgroup_height_cap(m: _re.Match) -> str:
+            indent = m.group(1)
+            var = m.group(2)
+            arrange_call = m.group(3)
+            line = f"{indent}{var}{arrange_call}"
+            if "set_height" not in arrange_call and "set(height" not in arrange_call:
+                line += f"\n{indent}if {var}.height > 5.5: {var}.set(height=5.5)"
+            return line
+
+        source = _re.sub(
+            r'^([ \t]+)(\w+)(\.arrange\([^)]*\)(?:\.[a-z_]+\([^)]*\))*)\s*$',
+            _inject_vgroup_height_cap,
+            source,
+            flags=_re.MULTILINE,
+        )
+
+        # Inject Axes x_length/y_length if missing
+        def _inject_axes_sizing(m: _re.Match) -> str:
+            full = m.group(0)
+            if "x_length" not in full and "y_length" not in full:
+                # Insert before the closing paren
+                full = _re.sub(
+                    r'\)\s*$',
+                    ', x_length=10, y_length=5)',
+                    full,
+                )
+            return full
+
+        source = _re.sub(
+            r'Axes\([^)]*\)',
+            _inject_axes_sizing,
+            source,
+        )
+
+        # Replace .to_edge(UP) on title-like variables with .move_to(UP * 3.2)
+        source = _re.sub(
+            r'(title\w*)\.to_edge\(\s*UP\s*(?:,\s*buff\s*=\s*[\d.]+)?\s*\)',
+            r'\1.move_to(UP * 3.2)',
+            source,
+        )
 
         # ── Inject final FadeOut if construct() doesn't end with one ─────
         if 'def construct(self)' in source and 'FadeOut(m) for m in self.mobjects' not in source:

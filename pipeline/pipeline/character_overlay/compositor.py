@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 class CharacterCompositor:
-    """Overlays a character PNG sprite onto a ManimGL animation clip
+    """Overlays a character PNG sprite onto a Manim animation clip
     and mixes in the synthesized voice audio track.
     """
 

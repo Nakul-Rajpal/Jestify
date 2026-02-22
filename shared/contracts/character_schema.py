@@ -50,6 +50,7 @@ CHARACTER_PERSONALITIES: dict[Character, CharacterPersonality] = {
             "where each challenge unlocks better technique, control, and strategy. He approaches "
             "new problems with curiosity and excitement, treating each lesson as a chance to level up."
         ),
+        fish_voice_id="1774abf25a3b4a2fb272e78c7382e4d2",
     ),
     Character.PETER: CharacterPersonality(
         id=Character.PETER,
@@ -65,20 +66,21 @@ CHARACTER_PERSONALITIES: dict[Character, CharacterPersonality] = {
             "concepts by relating them to ordinary routines, family chaos, and funny what-if scenarios. "
             "The style is comedic, but the educational goal is still clear and structured."
         ),
+        fish_voice_id="445c35f86b8547da870609b66e6b5d7d",
     ),
-    Character.ROGAN: CharacterPersonality(
-        id=Character.ROGAN,
-        display_name="Joe Rogan",
-        voice_style="conversational, curious, long-form podcast cadence",
-        analogy_domain="podcasts, debate, thought experiments, real-world examples",
-        catchphrases=["That's wild", "Think about it", "Here's the thing"],
-        tone="curious and exploratory, explains by questioning assumptions",
+    Character.ALYSA: CharacterPersonality(
+        id=Character.ALYSA,
+        display_name="Alysa Liu",
+        voice_style="calm, clear, confident, step-by-step",
+        analogy_domain="precision, practice, flow, building from basics",
+        catchphrases=["Let's walk through this", "Step by step", "Nice and clear"],
+        tone="calm and clear, focused on clarity and step-by-step flow",
         background=(
-            "Joe Rogan's style is exploratory and discussion-driven. He digs into topics by asking "
-            "follow-up questions, comparing viewpoints, and pressure-testing assumptions with concrete "
-            "examples. The cadence is conversational and reflective, like a long-form interview where "
-            "ideas are unpacked step by step. He often connects abstract concepts to practical situations "
-            "people can observe in daily life."
+            "Alysa Liu's teaching style is calm, precise, and methodical. She breaks down complex "
+            "ideas into clear sequential steps, making sure each concept is understood before moving "
+            "on. Her delivery is confident but approachable, emphasizing clarity over complexity. "
+            "She connects ideas to practical understanding and builds from fundamentals upward."
         ),
+        fish_voice_id="9eb13940358f431498cb1db15fd5ec22",
     ),
 }

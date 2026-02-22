@@ -16,6 +16,8 @@ from pathlib import Path
 from urllib import request, error
 
 from pipeline.config import FISH_API_KEY, FISH_MODEL
+from shared.contracts.character_schema import CHARACTER_PERSONALITIES
+from shared.contracts.enums import Character
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +33,21 @@ class VoiceSynthesizer:
         logger.info("[voice] Detecting TTS backend...")
         self._backend = self._detect_backend()
         logger.info("[voice] Selected backend: %s", self._backend)
+
+    @staticmethod
+    def _resolve_fish_voice_id(character_id: str, voice_id: str | None) -> str | None:
+        """Resolve a Fish Audio voice ID: use explicit voice_id, else character default."""
+        if voice_id:
+            return voice_id
+        try:
+            char_enum = Character(character_id)
+            personality = CHARACTER_PERSONALITIES.get(char_enum)
+            if personality and personality.fish_voice_id:
+                logger.info("[voice]   Using character default fish_voice_id for %s", character_id)
+                return personality.fish_voice_id
+        except (ValueError, KeyError):
+            pass
+        return None
 
     @staticmethod
     def _detect_backend() -> str:
@@ -65,10 +82,15 @@ class VoiceSynthesizer:
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
         t0 = time.perf_counter()
 
-        # Try Fish Audio first if a voice_id was provided
-        if voice_id and self._fish_api_key:
+        # Resolve Fish voice ID: explicit > character default
+        resolved_voice_id = self._resolve_fish_voice_id(character_id, voice_id)
+        if resolved_voice_id:
+            logger.info("[voice] │  Fish voice ID: %s", resolved_voice_id)
+
+        # Try Fish Audio first if a voice ID is available
+        if resolved_voice_id and self._fish_api_key:
             try:
-                self._synthesize_fish_audio(text, voice_id, output_path)
+                self._synthesize_fish_audio(text, resolved_voice_id, output_path)
                 elapsed = time.perf_counter() - t0
                 out_file = Path(output_path)
                 logger.info(
@@ -79,7 +101,7 @@ class VoiceSynthesizer:
             except Exception as exc:
                 logger.warning(
                     "[voice] │  Fish Audio synthesis failed for voice %s, falling back: %s",
-                    voice_id, exc,
+                    resolved_voice_id, exc,
                 )
 
         # Fall back to local TTS backends
@@ -120,6 +142,7 @@ class VoiceSynthesizer:
             "text": text,
             "reference_id": voice_id,
             "format": "wav",
+            "model": self._fish_model,
         }
         req = request.Request(
             url="https://api.fish.audio/v1/tts",
@@ -127,7 +150,6 @@ class VoiceSynthesizer:
             headers={
                 "Authorization": f"Bearer {self._fish_api_key}",
                 "Content-Type": "application/json",
-                "model": self._fish_model,
             },
             data=json.dumps(payload).encode("utf-8"),
         )
@@ -172,7 +194,7 @@ class VoiceSynthesizer:
             "lebron": "en-US-ChristopherNeural",
             "goku": "en-US-GuyNeural",
             "peter": "en-US-DavisNeural",
-            "rogan": "en-US-EricNeural",
+            "alysa": "en-US-AnaNeural",
         }
         voice = voice_map.get(character_id, "en-US-GuyNeural")
         logger.info("[voice] │  edge-tts voice: %s (character: %s)", voice, character_id)

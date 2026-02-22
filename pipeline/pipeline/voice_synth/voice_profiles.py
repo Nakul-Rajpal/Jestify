@@ -1,8 +1,8 @@
 """Voice profile mappings for each character.
 
-Each character has a reference audio clip and transcript that will be
-used by Qwen3-TTS for voice cloning.  The ``ref_audio_path`` files will
-be added to ``pipeline/assets/characters/<id>/voice_ref.wav`` by the team.
+Each character has a reference audio clip and transcript used by Fish Audio
+for voice cloning.  The ``ref_audio_path`` files will be added to
+``pipeline/assets/characters/<id>/voice_ref.wav`` by the team.
 """
 
 from pathlib import Path
@@ -37,11 +37,11 @@ CHARACTER_VOICE_PROFILES: dict[str, dict] = {
         ),
         "language": "English",
     },
-    "rogan": {
-        "ref_audio_path": str(_ASSETS / "characters" / "rogan" / "voice_ref.wav"),
+    "alysa": {
+        "ref_audio_path": str(_ASSETS / "characters" / "alysa" / "voice_ref.wav"),
         "ref_transcript": (
-            "Think about this for a second. "
-            "If we zoom out, the pattern is obvious."
+            "Let's walk through this step by step. "
+            "Once you see the pattern, it all makes sense."
         ),
         "language": "English",
     },

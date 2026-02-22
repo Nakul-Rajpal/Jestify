@@ -1,15 +1,6 @@
 @import "tailwindcss";
 
-@font-face {
-  font-family: "BYRL";
-  src:
-    url("/fonts/BYRL-Variable.woff2") format("woff2"),
-    url("/fonts/BYRL-Regular.woff2") format("woff2"),
-    url("/fonts/BYRL-Regular.otf") format("opentype");
-  font-weight: 100 900;
-  font-style: normal;
-  font-display: swap;
-}
+/* Wordmark font (Space Grotesk) loaded via next/font in layout.tsx */
 
 :root {
   --background: #0a0712;
@@ -134,7 +125,7 @@ body {
 .neo-grotesk-wordmark {
   margin-top: 0.35rem;
   font-family:
-    "BYRL",
+    var(--font-space-grotesk),
     "Neue Haas Grotesk Display Pro",
     "Neue Haas Grotesk Text Pro",
     "Helvetica Neue",

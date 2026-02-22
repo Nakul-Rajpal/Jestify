@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     FISH_VOICE_ID_LEBRON: str = "ea9a7ea97af942eab87c974d422263fe"
     FISH_VOICE_ID_GOKU: str = ""
     FISH_VOICE_ID_PETER: str = ""
-    FISH_VOICE_ID_ROGAN: str = ""
+    FISH_VOICE_ID_ALYSA: str = ""
     CONTEXT7_API_KEY: str = ""
     DOCUMENT_EXTRACT_TIMEOUT_SECONDS: int = 30
     STORAGE_PATH: str = str(PROJECT_ROOT / "storage")

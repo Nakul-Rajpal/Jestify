@@ -29,10 +29,10 @@ const CHARACTERS: CharacterOption[] = [
     imageSrc: "/characters/peter.png",
   },
   {
-    id: Character.ROGAN,
+    id: Character.ALYSA,
     name: "Alysa Liu",
     description: "Calm and clear delivery focused on clarity and step-by-step flow.",
-    imageSrc: "/characters/rogan.png",
+    imageSrc: "/characters/alysa.png",
   },
 ];
 
