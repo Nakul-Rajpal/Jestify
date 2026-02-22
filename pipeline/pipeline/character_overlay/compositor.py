@@ -20,7 +20,7 @@ class CharacterCompositor:
         audio_file: str,
         output_path: str,
         position: str = "top-left",
-        scale: float = 0.28,
+        scale: float = 0.20,
     ) -> str:
         """Composite character sprite and audio onto the animation clip."""
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
@@ -116,7 +116,7 @@ class CharacterCompositor:
             "bottom-right": "main_w-overlay_w-10:main_h-overlay_h-10",
             "bottom-left": "10:main_h-overlay_h-10",
             "top-right": "main_w-overlay_w-10:10",
-            "top-left": "10:10",
+            "top-left": "22:14",
             "middle-left": "24:(main_h-overlay_h)/2",
             "middle-right": "main_w-overlay_w-24:(main_h-overlay_h)/2",
         }

@@ -44,6 +44,15 @@ class VideoAssembler:
         logger.info("[assembler] │  Concat file: %s", concat_file)
         logger.info("[assembler] │  Concat contents:\n%s", concat_contents)
 
+        fast_copy_cmd = [
+            "ffmpeg", "-y",
+            "-f", "concat", "-safe", "0",
+            "-i", concat_file,
+            "-c", "copy",
+            "-movflags", "+faststart",
+            output_path,
+        ]
+
         cmd = [
             "ffmpeg", "-y",
             "-fflags", "+genpts",
@@ -59,10 +68,17 @@ class VideoAssembler:
             output_path,
         ]
 
-        logger.info("[assembler] │  Command: %s", " ".join(cmd))
+        logger.info("[assembler] │  Fast-path command: %s", " ".join(fast_copy_cmd))
+        logger.info("[assembler] │  Fallback command: %s", " ".join(cmd))
 
         t0 = time.perf_counter()
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        result = subprocess.run(fast_copy_cmd, capture_output=True, text=True, timeout=120)
+        if result.returncode != 0:
+            logger.warning(
+                "[assembler] │  Fast-path concat-copy failed (exit %d), falling back to transcode",
+                result.returncode,
+            )
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         elapsed = time.perf_counter() - t0
 
         if result.stdout.strip():

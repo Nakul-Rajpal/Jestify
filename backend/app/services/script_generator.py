@@ -29,11 +29,11 @@ logger = logging.getLogger(__name__)
 CLAUDE_MODEL = "claude-sonnet-4-20250514"
 FAST_MODE = os.getenv("FAST_GENERATION_MODE", "true").lower() in {"1", "true", "yes"}
 ENABLE_CONTEXT7 = os.getenv("ENABLE_CONTEXT7_DOCS", "false").lower() in {"1", "true", "yes"}
-MAX_SOURCE_CHARS = int(os.getenv("MAX_SOURCE_CHARS", "12000"))
-FAST_TARGET_SCENES = int(os.getenv("FAST_TARGET_SCENES", "6"))
-FAST_MIN_SCENE_SECONDS = int(os.getenv("FAST_MIN_SCENE_SECONDS", "20"))
-FAST_MAX_SCENE_SECONDS = int(os.getenv("FAST_MAX_SCENE_SECONDS", "32"))
-FAST_CODE_MAX_TOKENS = int(os.getenv("FAST_CODE_MAX_TOKENS", "10240"))
+MAX_SOURCE_CHARS = int(os.getenv("MAX_SOURCE_CHARS", "8000"))
+FAST_TARGET_SCENES = int(os.getenv("FAST_TARGET_SCENES", "5"))
+FAST_MIN_SCENE_SECONDS = int(os.getenv("FAST_MIN_SCENE_SECONDS", "18"))
+FAST_MAX_SCENE_SECONDS = int(os.getenv("FAST_MAX_SCENE_SECONDS", "24"))
+FAST_CODE_MAX_TOKENS = int(os.getenv("FAST_CODE_MAX_TOKENS", "8192"))
 TARGET_TOTAL_MIN_SECONDS = FAST_TARGET_SCENES * FAST_MIN_SCENE_SECONDS
 TARGET_TOTAL_MAX_SECONDS = FAST_TARGET_SCENES * FAST_MAX_SCENE_SECONDS
 MIN_VISUAL_STRUCTURE_SCENES = max(2, FAST_TARGET_SCENES // 2)
@@ -624,6 +624,7 @@ Named grid positions — use these for ALL placement:
   MAIN_AREA    = DOWN * 0.3             — primary content below title
   LEFT_PANEL   = LEFT * 3.2             — split-screen left
   RIGHT_PANEL  = RIGHT * 3.2            — split-screen right
+  SPRITE_SAFE_ZONE = top-left quadrant  — keep x <= -4.2 and y >= 1.4 visually clear
 
 Layout patterns — pick ONE per scene:
   Full Center:    Title at UP*3.2, single content at DOWN*0.3
@@ -674,6 +675,13 @@ MANDATORY: At least {MIN_VISUAL_STRUCTURE_SCENES} scenes MUST use visual structu
    Avoid placing Text at y <= -2.3. Keep axis labels separate from narration text.
 6. Do NOT place narration sentences on top of axes/ticks/grid lines.
    For graph captions use .next_to(axes, UP, buff>=0.5) or move_to(UP * value).
+7. In any scene that uses Axes(...), never use .next_to(..., DOWN) for captions.
+   Place captions to UP/RIGHT/LEFT of graph content only.
+8. Avoid .to_edge(DOWN) for narration text in graph/equation scenes.
+9. Leave the top-left area clear for character sprite overlay:
+   do not place titles, labels, bullets, or axes labels in x <= -4.2 and y >= 1.4.
+10. Avoid `.to_corner(UL)` and avoid `.to_edge(LEFT)` for large text groups.
+    Prefer centered placement or shift those groups right by at least 1.0 units.
 
 === COLOR THEME ===
 Background is BLACK. Use high contrast:

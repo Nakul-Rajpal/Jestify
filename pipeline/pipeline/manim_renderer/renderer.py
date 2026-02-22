@@ -22,6 +22,7 @@ class ManimRenderer:
 
     def __init__(self, timeout: int = _RENDER_TIMEOUT_SECONDS):
         self._timeout = timeout
+        self._fps = self._env_int("MANIM_FPS", 12, min_value=8, max_value=24)
         self._ensure_texlive_on_path()
         self._engine = self._detect_engine()
         self._check_dependencies()
@@ -34,6 +35,14 @@ class ManimRenderer:
         if self._texmfdist:
             logger.info("[render] TEXMFDIST: %s", self._texmfdist)
             os.environ["TEXMFDIST"] = self._texmfdist
+
+    @staticmethod
+    def _env_int(name: str, default: int, min_value: int = 1, max_value: int = 10_000) -> int:
+        try:
+            value = int(os.getenv(name, str(default)))
+            return max(min_value, min(max_value, value))
+        except Exception:
+            return default
 
     @staticmethod
     def _ensure_texlive_on_path():
@@ -95,6 +104,7 @@ class ManimRenderer:
         logger.info("[render] │  Engine: %s", self._engine)
         logger.info("[render] │  Output dir: %s", output_dir)
         logger.info("[render] │  Timeout: %ds", self._timeout)
+        logger.info("[render] │  FPS: %d", self._fps)
 
         if not scene_py.exists():
             logger.error("[render] │  Scene file does not exist!")
@@ -180,6 +190,7 @@ class ManimRenderer:
             str(scene_py),
             class_name,
             "-ql",
+            "--fps", str(self._fps),
             "--format=mp4",
             f"--media_dir={output_dir}",
         ])
@@ -465,7 +476,7 @@ class ManimRenderer:
         # Ensure down-stacked groups have enough vertical breathing room.
         def _raise_arrange_down_buff(m: _re.Match) -> str:
             val = float(m.group(1))
-            val = max(val, 0.6)
+            val = max(val, 0.7)
             return f"arrange(DOWN, buff={val:.2f})"
 
         source = _re.sub(
@@ -475,7 +486,7 @@ class ManimRenderer:
         )
         source = _re.sub(
             r'arrange\(\s*DOWN\s*\)',
-            'arrange(DOWN, buff=0.60)',
+            'arrange(DOWN, buff=0.70)',
             source,
         )
 
@@ -483,7 +494,7 @@ class ManimRenderer:
         def _raise_next_to_buff(m: _re.Match) -> str:
             before = m.group(1)
             val = float(m.group(2))
-            val = max(val, 0.35)
+            val = max(val, 0.45)
             return f"{before}buff={val:.2f}"
 
         source = _re.sub(
@@ -498,7 +509,7 @@ class ManimRenderer:
             target = m.group(1)
             raw_buff = m.group(2)
             buff = float(raw_buff) if raw_buff is not None else 0.0
-            buff = max(buff, 0.65)
+            buff = max(buff, 0.85)
             return f".next_to({target}, DOWN, buff={buff:.2f})"
 
         source = _re.sub(
@@ -507,11 +518,28 @@ class ManimRenderer:
             source,
         )
 
+        # If text is positioned DOWN relative to axes/graph anchors, flip it UP.
+        # This prevents narration labels from landing on axis/tick regions.
+        def _avoid_axes_down_overlap(m: _re.Match) -> str:
+            target = m.group(1).strip()
+            raw_buff = m.group(2)
+            buff = float(raw_buff) if raw_buff is not None else 0.0
+            buff = max(buff, 0.85)
+            if "axes" in target or "c2p(" in target:
+                return f".next_to({target}, UP, buff={buff:.2f})"
+            return f".next_to({target}, DOWN, buff={buff:.2f})"
+
+        source = _re.sub(
+            r'\.next_to\(\s*(.+?)\s*,\s*DOWN\s*(?:,\s*buff\s*=\s*([0-9]*\.?[0-9]+))?\s*\)',
+            _avoid_axes_down_overlap,
+            source,
+        )
+
         # Avoid placing labels/captions too low where they can overlap graph axes.
         def _clamp_deep_down_move(m: _re.Match) -> str:
             val = float(m.group(1))
-            if val > 2.3:
-                val = 2.3
+            if val > 1.9:
+                val = 1.9
             return f"move_to(DOWN * {val:.2f})"
 
         source = _re.sub(
@@ -524,8 +552,8 @@ class ManimRenderer:
         # into graph axes or below frame bounds.
         def _clamp_down_vector(m: _re.Match) -> str:
             val = float(m.group(1))
-            if val > 2.3:
-                val = 2.3
+            if val > 1.9:
+                val = 1.9
             return f"DOWN * {val:.2f}"
 
         source = _re.sub(
@@ -537,12 +565,51 @@ class ManimRenderer:
         def _raise_down_edge_buff(m: _re.Match) -> str:
             raw = m.group(1)
             val = float(raw) if raw is not None else 0.0
-            val = max(val, 0.6)
+            val = max(val, 1.0)
             return f".to_edge(DOWN, buff={val:.2f})"
 
         source = _re.sub(
             r'\.to_edge\(\s*DOWN\s*(?:,\s*buff\s*=\s*([0-9]*\.?[0-9]+))?\s*\)',
             _raise_down_edge_buff,
+            source,
+        )
+
+        # Reserve upper-left for character sprite overlay.
+        def _shift_ul_corner(m: _re.Match) -> str:
+            raw = m.group(1)
+            buff = float(raw) if raw is not None else 0.0
+            buff = max(buff, 0.9)
+            return f".to_corner(UL, buff={buff:.2f}).shift(RIGHT * 1.2 + DOWN * 0.5)"
+
+        source = _re.sub(
+            r'\.to_corner\(\s*UL\s*(?:,\s*buff\s*=\s*([0-9]*\.?[0-9]+))?\s*\)',
+            _shift_ul_corner,
+            source,
+        )
+
+        # Keep hard-left placements away from the sprite region.
+        def _raise_left_edge_buff(m: _re.Match) -> str:
+            raw = m.group(1)
+            buff = float(raw) if raw is not None else 0.0
+            buff = max(buff, 1.0)
+            return f".to_edge(LEFT, buff={buff:.2f})"
+
+        source = _re.sub(
+            r'\.to_edge\(\s*LEFT\s*(?:,\s*buff\s*=\s*([0-9]*\.?[0-9]+))?\s*\)',
+            _raise_left_edge_buff,
+            source,
+        )
+
+        # Lift graph axes slightly so lower captions have breathing room.
+        def _lift_axes_from_bottom(m: _re.Match) -> str:
+            var = m.group(1)
+            val = float(m.group(2))
+            val = min(val, 0.15)
+            return f"{var}.move_to(DOWN * {val:.2f})"
+
+        source = _re.sub(
+            r'((?:axes|ax)\w*)\.move_to\(\s*DOWN\s*\*\s*([0-9]*\.?[0-9]+)\s*\)',
+            _lift_axes_from_bottom,
             source,
         )
 

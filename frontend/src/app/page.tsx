@@ -8,7 +8,6 @@ import {
   JobStatus as JobStatusEnum,
   UploadedDocument,
 } from "@/types";
-import Link from "next/link";
 import { generateVideo, BASE_URL } from "@/lib/api";
 import { useJobPolling } from "@/hooks/useJobPolling";
 import { useDocumentUpload } from "@/hooks/useDocumentUpload";
@@ -128,12 +127,6 @@ export default function Home() {
           <span className="text-[#8b5cf6]">J E S T</span>
           <span className="text-[#facc15]"> I F Y</span>
         </h1>
-        <Link
-          href="/library"
-          className="text-sm text-neutral-400 hover:text-white transition-colors"
-        >
-          Library
-        </Link>
       </header>
 
       {/* Main content area */}
