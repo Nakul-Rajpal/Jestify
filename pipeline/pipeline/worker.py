@@ -2,17 +2,56 @@
 
 import json
 import logging
+import os
+import subprocess
 import sys
+import time
+import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-# Ensure project root is on sys.path so shared.contracts is importable.
+# ── TeX env vars must be set before Celery forks workers ─────────────────── #
+# dvisvgm (used by Manim for MathTex) needs both TEXMFCNF (for texmf.cnf)
+# and TEXMFDIST (for PostScript headers and font maps) to render LaTeX.
+# These must be inherited by the forked process — setting later is unreliable.
+def _setup_tex_env() -> None:
+    texmf_dist = None
+    if "TEXMFCNF" not in os.environ:
+        try:
+            _kpse = subprocess.run(
+                ["kpsewhich", "texmf.cnf"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if _kpse.returncode == 0 and _kpse.stdout.strip():
+                cnf_dir = Path(_kpse.stdout.strip()).parent
+                os.environ["TEXMFCNF"] = str(cnf_dir) + ":"
+                texmf_dist = str(cnf_dir.parent)
+        except Exception:
+            for _candidate in Path("/opt/homebrew/Cellar/texlive").glob("*/share/texmf-dist/web2c"):
+                if (_candidate / "texmf.cnf").exists():
+                    os.environ["TEXMFCNF"] = str(_candidate) + ":"
+                    texmf_dist = str(_candidate.parent)
+                    break
+    if "TEXMFDIST" not in os.environ:
+        if texmf_dist:
+            os.environ["TEXMFDIST"] = texmf_dist
+        elif os.environ.get("TEXMFCNF"):
+            candidate = str(Path(os.environ["TEXMFCNF"].rstrip(":")).parent)
+            if Path(candidate).is_dir():
+                os.environ["TEXMFDIST"] = candidate
+
+_setup_tex_env()
+
+if os.environ.get("TEXMFCNF"):
+    print(f"[worker] TEXMFCNF={os.environ['TEXMFCNF']} (set at module load)", flush=True)
+if os.environ.get("TEXMFDIST"):
+    print(f"[worker] TEXMFDIST={os.environ['TEXMFDIST']} (set at module load)", flush=True)
+
 _PROJECT_ROOT = str(Path(__file__).resolve().parents[2])
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-# Also ensure pipeline/ dir is on sys.path so 'pipeline' package is importable
 _PIPELINE_DIR = str(Path(__file__).resolve().parents[1])
 if _PIPELINE_DIR not in sys.path:
     sys.path.insert(0, _PIPELINE_DIR)
@@ -23,11 +62,13 @@ from shared.contracts.enums import Character, Difficulty, JobStatus
 from shared.contracts.pipeline_schema import PipelineInput
 from pipeline.config import REDIS_URL
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 logger = logging.getLogger(__name__)
 
-# --------------------------------------------------------------------------- #
-# Celery application
-# --------------------------------------------------------------------------- #
 app = Celery(
     "jestify_pipeline",
     broker=REDIS_URL,
@@ -39,14 +80,21 @@ app.conf.update(
     accept_content=["json"],
     result_serializer="json",
     task_track_started=True,
-    task_acks_late=True,
+    task_acks_late=False,
+    task_reject_on_worker_lost=True,
     worker_prefetch_multiplier=1,
 )
 
 
-# --------------------------------------------------------------------------- #
-# Redis helpers
-# --------------------------------------------------------------------------- #
+@app.on_after_configure.connect
+def purge_stale_tasks(sender, **kwargs):
+    """Purge any stale tasks left in the queue from a previous worker session."""
+    try:
+        purged = sender.control.purge()
+        logger.info("[worker] Purged %d stale tasks from queue on startup", purged or 0)
+    except Exception as e:
+        logger.warning("[worker] Could not purge stale tasks: %s", e)
+
 
 def _redis_client():
     import redis as _redis
@@ -78,8 +126,60 @@ def _update_redis_progress(
         }
         r.set(f"job:{job_id}", json.dumps(data), ex=3600)
         r.close()
+        logger.debug("[worker] Redis progress updated: job=%s status=%s pct=%d", job_id, status, progress_percent)
     except Exception as e:
-        logger.warning(f"Failed to update Redis progress for job {job_id}: {e}")
+        logger.warning("[worker] Failed to update Redis progress for job %s: %s", job_id, e)
+
+
+# --------------------------------------------------------------------------- #
+# Database persistence
+# --------------------------------------------------------------------------- #
+
+def _persist_job_to_db(
+    job_id: str,
+    status: str,
+    progress_percent: int,
+    current_step: str,
+    video_path: Optional[str] = None,
+    error_message: Optional[str] = None,
+):
+    """Persist final job state to PostgreSQL (synchronous — safe for Celery workers)."""
+    try:
+        from sqlalchemy import create_engine, text
+        from pipeline.config import DATABASE_URL
+
+        sync_url = DATABASE_URL.replace("+asyncpg", "").replace("+aiopg", "")
+
+        engine = create_engine(sync_url)
+        with engine.connect() as conn:
+            result = conn.execute(
+                text("""
+                    UPDATE jobs SET
+                        status = :status,
+                        progress_percent = :progress_percent,
+                        current_step = :current_step,
+                        video_path = COALESCE(:video_path, video_path),
+                        error_message = COALESCE(:error_message, error_message),
+                        updated_at = NOW()
+                    WHERE id = :job_id
+                """),
+                {
+                    "job_id": job_id,
+                    "status": status,
+                    "progress_percent": progress_percent,
+                    "current_step": current_step,
+                    "video_path": video_path,
+                    "error_message": error_message,
+                },
+            )
+            conn.commit()
+            if result.rowcount:
+                logger.info("Persisted job %s to DB: status=%s", job_id, status)
+            else:
+                logger.warning("Job %s not found in DB for persistence", job_id)
+        engine.dispose()
+    except Exception as e:
+        logger.error("DB persistence failed for job %s: %s", job_id, e)
 
 
 # --------------------------------------------------------------------------- #
@@ -94,26 +194,39 @@ def generate_video_task(
     difficulty: str,
     extracted_text: str,
     prompt: Optional[str] = None,
+    voice_id: Optional[str] = None,
 ):
-    """
-    Main Celery task picked up by the pipeline worker.
+    """Main Celery task picked up by the pipeline worker."""
+    task_t0 = time.perf_counter()
 
-    This task:
-    1. Generates the educational script using Claude
-    2. Runs the ManimGL rendering pipeline
-    3. Updates job status in Redis throughout
-    """
-    logger.info(f"Starting video generation for job {job_id}")
+    logger.info("=" * 70)
+    logger.info("[worker] JOB START: %s", job_id)
+    logger.info("=" * 70)
+    logger.info("[worker] Character: %s", character)
+    logger.info("[worker] Difficulty: %s", difficulty)
+    logger.info("[worker] Prompt: %s", prompt or "(none)")
+    logger.info("[worker] Extracted text: %d chars", len(extracted_text))
+    logger.info("[worker] Extracted text preview: %.300s...", extracted_text)
+    logger.info("[worker] Celery task ID: %s", self.request.id)
+    logger.info("[worker] Python: %s", sys.executable)
+    logger.info("[worker] CWD: %s", os.getcwd())
+    logger.info("[worker] REDIS_URL: %s", REDIS_URL[:30] + "...")
 
     try:
-        # Step 1: Generate script using Claude
+        # ── Step 1: Generate script ─────────────────────────────────── #
+        logger.info("[worker] ── Step 1/3: Generating script with Claude ──")
         _update_redis_progress(
             job_id,
             status=JobStatus.GENERATING_SCRIPT.value,
-            progress_percent=10,
-            current_step="Generating educational script with AI...",
+            progress_percent=5,
+            current_step=(
+                "Analyzing your material and writing an educational script — "
+                "AI is designing scene-by-scene animations, narration, and visual layouts. "
+                "This usually takes 30-60 seconds."
+            ),
         )
 
+        step_t0 = time.perf_counter()
         from backend.app.services.script_generator import ScriptGenerator
 
         generator = ScriptGenerator()
@@ -123,48 +236,84 @@ def generate_video_task(
             difficulty=Difficulty(difficulty),
             user_prompt=prompt,
         )
+        step_elapsed = time.perf_counter() - step_t0
 
-        logger.info(f"Script generated for job {job_id}: {script.total_scenes} scenes")
+        logger.info("[worker] Script generated in %.1fs", step_elapsed)
+        logger.info("[worker]   Title: %s", script.title)
+        logger.info("[worker]   Total scenes: %d", script.total_scenes)
+        for i, s in enumerate(script.scenes):
+            has_code = bool(s.manim_code)
+            code_len = len(s.manim_code) if s.manim_code else 0
+            logger.info(
+                "[worker]   Scene %d: type=%s, duration=%.0fs, narration=%d chars, has_code=%s (%d chars)",
+                i + 1, s.manim_scene_type, s.duration_hint_seconds,
+                len(s.narration_text), has_code, code_len,
+            )
 
-        # Step 2: Build pipeline input and run orchestrator
+        # ── Step 2: Build pipeline input ────────────────────────────── #
+        logger.info("[worker] ── Step 2/3: Building pipeline input ──")
         _update_redis_progress(
             job_id,
             status=JobStatus.RENDERING_ANIMATIONS.value,
-            progress_percent=20,
-            current_step="Script generated. Starting video rendering...",
+            progress_percent=15,
+            current_step=(
+                f"Script complete — {len(script.scenes)} scenes planned. "
+                "Preparing animation rendering pipeline..."
+            ),
         )
 
         from pipeline.config import STORAGE_PATH
         output_path = f"{STORAGE_PATH}/videos/{job_id}/final.mp4"
+        logger.info("[worker] Output path: %s", output_path)
+        logger.info("[worker] Storage path: %s", STORAGE_PATH)
 
         pipeline_input = PipelineInput(
             job_id=job_id,
             script=script,
             character=Character(character),
             output_path=output_path,
+            voice_id=voice_id,
         )
 
-        # Step 3: Run the full rendering pipeline
+        # ── Step 3: Run pipeline ────────────────────────────────────── #
+        logger.info("[worker] ── Step 3/3: Running rendering pipeline ──")
         from pipeline.orchestrator import PipelineOrchestrator
+
+        scene_count = len(script.scenes)
 
         def _on_progress(status: JobStatus, progress_pct: int):
             step_messages = {
-                JobStatus.RENDERING_ANIMATIONS: "Rendering ManimGL animations...",
-                JobStatus.SYNTHESIZING_VOICE: "Synthesizing character voice...",
-                JobStatus.COMPOSITING: "Compositing character overlay...",
-                JobStatus.ASSEMBLING: "Assembling final video...",
+                JobStatus.RENDERING_ANIMATIONS: (
+                    f"Rendering {scene_count} animation scenes with Manim — "
+                    "creating graphs, equations, and visual diagrams. "
+                    "This is the longest step and usually takes 2-4 minutes."
+                ),
+                JobStatus.SYNTHESIZING_VOICE: (
+                    f"Generating AI voiceover for {scene_count} scenes — "
+                    "synthesizing natural speech for each narration segment."
+                ),
+                JobStatus.COMPOSITING: (
+                    f"Compositing {scene_count} scenes — overlaying character, "
+                    "audio, and animations into unified video clips."
+                ),
+                JobStatus.ASSEMBLING: (
+                    "Assembling final video — combining all scenes into one "
+                    "seamless MP4 with transitions and encoding for playback."
+                ),
             }
+            msg = step_messages.get(status, "Processing...")
+            logger.info("[worker] Progress: %s %d%% — %s", status.value, progress_pct, msg)
             _update_redis_progress(
                 job_id,
                 status=status.value,
                 progress_percent=progress_pct,
-                current_step=step_messages.get(status, "Processing..."),
+                current_step=msg,
             )
 
         orchestrator = PipelineOrchestrator(status_callback=_on_progress)
         output = orchestrator.run(pipeline_input)
 
-        # Step 4: Mark completed
+        # ── Done ────────────────────────────────────────────────────── #
         _update_redis_progress(
             job_id,
             status=JobStatus.COMPLETED.value,
@@ -173,7 +322,23 @@ def generate_video_task(
             video_url=f"/api/jobs/{job_id}/video",
         )
 
-        logger.info(f"Pipeline completed for job {job_id} -> {output.video_path}")
+        total_elapsed = time.perf_counter() - task_t0
+        logger.info("=" * 70)
+        logger.info(
+            "[worker] JOB COMPLETE: %s — %s (%.1fs total)",
+            job_id, output.video_path, total_elapsed,
+        )
+        logger.info("[worker] Duration: %.1fs", output.duration_seconds)
+        logger.info("=" * 70)
+
+        # Persist final state to database
+        _persist_job_to_db(
+            job_id=job_id,
+            status=JobStatus.COMPLETED.value,
+            progress_percent=100,
+            current_step="Video generation complete.",
+            video_path=output.video_path,
+        )
 
         return {
             "job_id": job_id,
@@ -183,9 +348,21 @@ def generate_video_task(
         }
 
     except Exception as e:
-        logger.error(f"Video generation failed for job {job_id}: {e}", exc_info=True)
+        total_elapsed = time.perf_counter() - task_t0
+        logger.error("=" * 70)
+        logger.error("[worker] JOB FAILED: %s after %.1fs", job_id, total_elapsed)
+        logger.error("[worker] Error: %s", e)
+        logger.error("[worker] Traceback:\n%s", traceback.format_exc())
+        logger.error("=" * 70)
         _update_redis_progress(
             job_id,
+            status=JobStatus.FAILED.value,
+            progress_percent=0,
+            current_step="Failed",
+            error_message=str(e),
+        )
+        _persist_job_to_db(
+            job_id=job_id,
             status=JobStatus.FAILED.value,
             progress_percent=0,
             current_step="Failed",

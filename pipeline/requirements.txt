@@ -1,3 +1,4 @@
+manim>=0.18.0
 manimgl
 celery>=5.3.0
 redis>=5.0.0
@@ -10,3 +11,17 @@ python-dotenv
 anthropic
 setuptools<78
 audioop-lts
+sqlalchemy[asyncio]>=2.0
+asyncpg>=0.29.0
+psycopg2-binary
+# Manim plugins
+manim-chemistry==0.5.1
+manim-automata
+manim-CAD-Drawing-Utils
+manim-physics
+manim-voiceover
+manim-dsa
+manim-circuit
+manim-astronomy
+manim-code-blocks-redux
+manim-slides

@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
 from .config import settings
 from .database import Base, engine
@@ -29,6 +30,14 @@ async def lifespan(app: FastAPI):
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Dev safety net for existing databases created before topic classification.
+        await conn.execute(
+            text(
+                "ALTER TABLE jobs "
+                "ADD COLUMN IF NOT EXISTS topic_id UUID "
+                "REFERENCES topics(id) ON DELETE SET NULL"
+            )
+        )
 
     yield
 

@@ -8,7 +8,8 @@ import {
   JobStatus as JobStatusEnum,
   UploadedDocument,
 } from "@/types";
-import { generateVideo } from "@/lib/api";
+import Link from "next/link";
+import { generateVideo, BASE_URL } from "@/lib/api";
 import { useJobPolling } from "@/hooks/useJobPolling";
 import { useDocumentUpload } from "@/hooks/useDocumentUpload";
 import CharacterSelector from "@/components/CharacterSelector";
@@ -31,7 +32,7 @@ export default function Home() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
 
-  const { upload, isUploading } = useDocumentUpload();
+  const { upload, isUploading, error: uploadError } = useDocumentUpload();
   const { status, progress, currentStep, videoUrl, thumbnailUrl, error, isPolling } =
     useJobPolling(currentJobId);
 
@@ -127,6 +128,12 @@ export default function Home() {
           <span className="text-[#8b5cf6]">J E S T</span>
           <span className="text-[#facc15]"> I F Y</span>
         </h1>
+        <Link
+          href="/library"
+          className="text-sm text-neutral-400 hover:text-white transition-colors"
+        >
+          Library
+        </Link>
       </header>
 
       {/* Main content area */}
@@ -192,8 +199,8 @@ export default function Home() {
         {isJobComplete && videoUrl && (
           <div className="flex-1 flex flex-col items-center justify-center mt-12 gap-4 w-full">
             <VideoPlayer
-              videoUrl={videoUrl}
-              thumbnailUrl={thumbnailUrl}
+              videoUrl={`${BASE_URL}${videoUrl}`}
+              thumbnailUrl={thumbnailUrl ? `${BASE_URL}${thumbnailUrl}` : undefined}
             />
             <button
               onClick={handleNewVideo}

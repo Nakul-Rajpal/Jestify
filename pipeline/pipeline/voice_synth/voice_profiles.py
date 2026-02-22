@@ -13,35 +13,35 @@ _ASSETS = Path(ASSETS_PATH)
 
 
 CHARACTER_VOICE_PROFILES: dict[str, dict] = {
-    "spongebob": {
-        "ref_audio_path": str(_ASSETS / "characters" / "spongebob" / "voice_ref.wav"),
+    "lebron": {
+        "ref_audio_path": str(_ASSETS / "characters" / "lebron" / "voice_ref.wav"),
         "ref_transcript": (
-            "I'm ready, I'm ready, I'm ready! "
-            "Today we're going to learn something really fun!"
+            "Stay focused and trust the process. "
+            "Let's break this down step by step."
         ),
         "language": "English",
     },
-    "superman": {
-        "ref_audio_path": str(_ASSETS / "characters" / "superman" / "voice_ref.wav"),
+    "goku": {
+        "ref_audio_path": str(_ASSETS / "characters" / "goku" / "voice_ref.wav"),
         "ref_transcript": (
-            "Up, up, and away! "
-            "Let me show you the power of knowledge."
+            "This is awesome! "
+            "Let's train and power up our understanding."
         ),
         "language": "English",
     },
-    "einstein": {
-        "ref_audio_path": str(_ASSETS / "characters" / "einstein" / "voice_ref.wav"),
+    "peter": {
+        "ref_audio_path": str(_ASSETS / "characters" / "peter" / "voice_ref.wav"),
         "ref_transcript": (
-            "Imagination is more important than knowledge. "
-            "Let us explore this beautiful idea together."
+            "Alright, here's the thing. "
+            "This is actually way simpler than it looks."
         ),
         "language": "English",
     },
-    "pirate": {
-        "ref_audio_path": str(_ASSETS / "characters" / "pirate" / "voice_ref.wav"),
+    "rogan": {
+        "ref_audio_path": str(_ASSETS / "characters" / "rogan" / "voice_ref.wav"),
         "ref_transcript": (
-            "Arrr, ye scallywags! "
-            "Gather round and I'll teach ye the secrets of the seven seas!"
+            "Think about this for a second. "
+            "If we zoom out, the pattern is obvious."
         ),
         "language": "English",
     },

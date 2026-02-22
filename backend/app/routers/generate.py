@@ -7,8 +7,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.contracts.api_types import GenerateRequest, GenerateResponse
-from shared.contracts.enums import JobStatus
+from shared.contracts.enums import Character, JobStatus
 
+from ..config import settings
 from ..database import get_db
 from ..models.document import Document
 from ..models.job import Job
@@ -16,6 +17,13 @@ from ..services.job_manager import JobManager
 from ..tasks.video_task import generate_video_task
 
 router = APIRouter(prefix="/generate", tags=["generate"])
+
+DEFAULT_FISH_VOICE_BY_CHARACTER: dict[Character, str] = {
+    Character.LEBRON: settings.FISH_VOICE_ID_LEBRON,
+    Character.GOKU: settings.FISH_VOICE_ID_GOKU,
+    Character.PETER: settings.FISH_VOICE_ID_PETER,
+    Character.ROGAN: settings.FISH_VOICE_ID_ROGAN,
+}
 
 
 @router.post("", response_model=GenerateResponse)
@@ -63,12 +71,14 @@ async def generate(
     )
 
     # Dispatch Celery task
+    voice_id = request.voice_id or DEFAULT_FISH_VOICE_BY_CHARACTER.get(request.character, "")
     generate_video_task.delay(
         job_id=str(job.id),
         character=request.character.value,
         difficulty=request.difficulty.value,
         prompt=request.prompt,
         extracted_text=combined_text,
+        voice_id=voice_id or None,
     )
 
     return GenerateResponse(
