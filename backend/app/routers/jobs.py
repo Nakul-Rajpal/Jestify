@@ -3,8 +3,8 @@
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.contracts.api_types import JobStatusResponse
@@ -97,12 +97,25 @@ async def get_job_status(
     )
 
 
+def _resolve_video_path(job, job_id: str) -> Path | None:
+    """Find the video file on disk, checking DB path then fallback."""
+    if job.video_path:
+        p = Path(job.video_path)
+        if p.exists() and p.stat().st_size > 0:
+            return p
+    fallback = Path(settings.STORAGE_PATH) / "videos" / job_id / "final.mp4"
+    if fallback.exists() and fallback.stat().st_size > 0:
+        return fallback
+    return None
+
+
 @router.get("/{job_id}/video")
 async def get_job_video(
     job_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-) -> FileResponse:
-    """Return the completed video file for a job."""
+):
+    """Return the completed video file with HTTP Range support for streaming."""
     try:
         job_uuid = uuid.UUID(job_id)
     except ValueError:
@@ -114,23 +127,53 @@ async def get_job_video(
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found.")
 
-    # Try 1: Use video_path from database if it exists on disk
-    if job.video_path:
-        video_path = Path(job.video_path)
-        if video_path.exists():
-            return FileResponse(
-                path=str(video_path),
-                media_type="video/mp4",
-                filename=f"jestify_{job_id}.mp4",
-            )
+    video_path = _resolve_video_path(job, job_id)
+    if video_path is None:
+        raise HTTPException(status_code=404, detail="Video not yet available for this job.")
 
-    # Try 2: Fallback to conventional storage path
-    fallback_path = Path(settings.STORAGE_PATH) / "videos" / job_id / "final.mp4"
-    if fallback_path.exists():
-        return FileResponse(
-            path=str(fallback_path),
+    file_size = video_path.stat().st_size
+    range_header = request.headers.get("range")
+
+    if range_header:
+        range_spec = range_header.replace("bytes=", "")
+        range_start_str, range_end_str = range_spec.split("-", 1)
+        range_start = int(range_start_str) if range_start_str else 0
+        range_end = int(range_end_str) if range_end_str else file_size - 1
+        range_end = min(range_end, file_size - 1)
+        content_length = range_end - range_start + 1
+
+        def iter_range():
+            with open(video_path, "rb") as f:
+                f.seek(range_start)
+                remaining = content_length
+                while remaining > 0:
+                    chunk = f.read(min(remaining, 1024 * 1024))
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+                    yield chunk
+
+        return StreamingResponse(
+            iter_range(),
+            status_code=206,
             media_type="video/mp4",
-            filename=f"jestify_{job_id}.mp4",
+            headers={
+                "Content-Range": f"bytes {range_start}-{range_end}/{file_size}",
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(content_length),
+                "Content-Disposition": f'inline; filename="jestify_{job_id}.mp4"',
+                "Cache-Control": "public, max-age=3600",
+            },
         )
 
-    raise HTTPException(status_code=404, detail="Video not yet available for this job.")
+    return FileResponse(
+        path=str(video_path),
+        media_type="video/mp4",
+        filename=f"jestify_{job_id}.mp4",
+        content_disposition_type="inline",
+        headers={
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(file_size),
+            "Cache-Control": "public, max-age=3600",
+        },
+    )

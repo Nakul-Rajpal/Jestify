@@ -433,6 +433,7 @@ import numpy as np
 
 class {class_name}(Scene):
     def construct(self):
+        self.camera.background_color = BLACK
         # TITLE at grid TITLE_POS
         title = Text("{title_escaped}", font_size=42)
         self.play(Write(title), run_time=1.8)

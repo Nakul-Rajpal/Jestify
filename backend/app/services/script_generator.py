@@ -61,6 +61,9 @@ TEXT & MATH MOBJECTS:
 
 SHAPES & GEOMETRY:
   Axes(x_range=[a,b,s], y_range=[c,d,s])   — NO x_length/y_length kwargs!
+  IMPORTANT: Use small ranges like [-3,3,1]. NEVER wider than [-5,5,1].
+  MANDATORY: After creating Axes, ALWAYS call axes.set_height(5.0).set_width(10.0)
+  to fit the frame. Without this, graphs will overflow and be cut off.
   NumberPlane(x_range, y_range)
   NumberLine(x_range)
   Dot(point), Line(start, end), Arrow(start, end)
@@ -125,6 +128,7 @@ COLORS:
 SCENE CLASS:
   class MyScene(Scene):
       def construct(self):
+          self.camera.background_color = BLACK
           ...
 
 === STRICT TYPOGRAPHY & LEGIBILITY RULES ===
@@ -194,6 +198,104 @@ Science: radial VGroup concept diagrams (central circle + radiating connectors)
 Math/Physics: equations with TransformMatchingTex, graphs, vector diagrams
 CS/Programming: box-and-arrow diagrams, array cells, tree structures
 
+=== VISUAL-FIRST RULE — NEVER PLAIN TEXT WALLS (CRITICAL) ===
+You MUST convert textual information into VISUAL STRUCTURES whenever possible.
+If content is a list → build a TREE, TABLE, or FLOWCHART, NOT stacked Text lines.
+If content describes relationships → use ARROWS, CONNECTORS, and DIAGRAMS.
+If content describes categories → use GROUPED BOXES with color-coded sections.
+If content describes a process → use a FLOWCHART with numbered boxes and arrows.
+If content describes a hierarchy → use a TREE with parent/child connections.
+If content describes comparisons → use a SIDE-BY-SIDE TABLE with columns.
+
+Building a TABLE (2+ columns of info):
+    headers = VGroup(
+        Text("Property", font_size=28, weight=BOLD, color=YELLOW),
+        Text("Value", font_size=28, weight=BOLD, color=YELLOW),
+    ).arrange(RIGHT, buff=3.0).move_to(UP * 1.5)
+    row1 = VGroup(
+        Text("Name", font_size=26, color=WHITE),
+        Text("Hash Table", font_size=26, color=BLUE),
+    ).arrange(RIGHT, buff=2.2).next_to(headers, DOWN, buff=0.5)
+
+Building a TREE (hierarchy):
+    root = VGroup(
+        RoundedRectangle(width=3, height=0.8, corner_radius=0.1, color=BLUE),
+        Text("Root", font_size=28).move_to(ORIGIN),
+    )
+    root[1].move_to(root[0].get_center())
+    child_a = VGroup(RoundedRectangle(..., color=GREEN), Text("Child A",...))
+    child_a[1].move_to(child_a[0].get_center())
+    # Position children below root
+    child_a.next_to(root, DOWN + LEFT, buff=0.8)
+    arrow_a = Arrow(root.get_bottom(), child_a.get_top(), buff=0.1, color=WHITE)
+
+Building a FLOWCHART (process):
+    step1 = VGroup(RoundedRectangle(width=3, height=0.7, color=BLUE),
+                    Text("Step 1", font_size=26))
+    step1[1].move_to(step1[0].get_center())
+    step2 = VGroup(RoundedRectangle(width=3, height=0.7, color=GREEN),
+                    Text("Step 2", font_size=26))
+    step2[1].move_to(step2[0].get_center())
+    steps = VGroup(step1, step2).arrange(DOWN, buff=1.2).move_to(DOWN * 0.3)
+    arrow = Arrow(step1.get_bottom(), step2.get_top(), buff=0.1, color=WHITE)
+
+MANDATORY: At least 3 out of 5-7 scenes MUST use visual structures (trees, tables,
+flowcharts, diagrams, graphs) instead of plain stacked text. Text-only scenes are
+only acceptable for the title/intro scene and the summary/outro scene.
+
+=== TEXT OVERLAP PREVENTION — ABSOLUTE ZERO-TOLERANCE (CRITICAL) ===
+Text MUST NEVER overlap with other text, unless it is an intentional Transform
+animation where one text morphs into another (TransformMatchingTex, ReplacementTransform).
+
+STRICT RULES:
+1. Before placing NEW content, ALWAYS FadeOut or reposition ALL existing content:
+     self.play(*[FadeOut(m) for m in self.mobjects if m is not title], run_time=1)
+   OR dim it:
+     self.play(existing_content.animate.set_opacity(0.3), run_time=0.5)
+
+2. NEVER have two separate Text/Tex objects that occupy the same or nearby y-position
+   without at least 0.5 units of vertical gap between them. Check buff values.
+
+3. When using .arrange(DOWN, buff=X), use buff >= 0.4 for text items.
+
+4. When using .next_to(other, DOWN, buff=X), use buff >= 0.3.
+
+5. For Transforms: the NEW Tex/Text MUST be .move_to(old_object) BEFORE the Transform.
+   This ensures they swap in-place and never coexist visually.
+
+6. NEVER use .shift() to "move text down a bit" — it creates overlaps when content grows.
+   Use .next_to() or .arrange() which compute positions from actual bounding boxes.
+
+7. MAXIMUM 5 text elements visible simultaneously. If you need more,
+   FadeOut earlier ones first, or use a scrolling/phased reveal approach.
+
+8. When adding annotations (labels, braces, arrows) next to existing content,
+   use .next_to() with buff >= 0.3 to guarantee no collision.
+
+=== COLOR THEME & BACKGROUND (MANDATORY) ===
+Background is BLACK (Manim default). ALL text and visuals must be designed for
+dark background with high contrast.
+
+Color assignments (use consistently across ALL scenes):
+  TITLES:       Text(..., color=WHITE, weight=BOLD) or GOLD for emphasis
+  SUBTITLES:    Text(..., color=GREY_A) or BLUE_A for section headers
+  BODY TEXT:    Text(..., color=WHITE) — never grey on black (too dim)
+  PRIMARY:      BLUE or BLUE_C — main concepts, primary objects, first graph
+  SECONDARY:    GREEN or GREEN_C — supporting concepts, second graph, comparisons
+  HIGHLIGHT:    YELLOW — key takeaways, currently active element, emphasis
+  RESULT:       GREEN_B — final answers, conclusions, verified results
+  WARNING/IMPORTANT: RED or RED_B — critical notes, errors, edge cases
+  NEUTRAL:      GREY_A — dimmed previous elements, background annotations
+  BOX BORDERS:  WHITE or color-matched to content (BLUE box for BLUE content)
+  ARROWS:       WHITE — neutral connectors; or color-matched for emphasis
+
+Rules:
+1. NEVER use dark colors (GREY_D, GREY_E, DARK_BROWN) for text — invisible on black.
+2. Title MUST be WHITE or GOLD. Never BLUE/GREEN/RED for the main title.
+3. When dimming elements, use .set_opacity(0.3), NOT a darker color.
+4. Every diagram/chart must use at least 2-3 distinct colors to differentiate parts.
+5. Color-coded legend is recommended for scenes with 3+ categories.
+
 === ADVANCED ANIMATION TECHNIQUES ===
 - Use LaggedStart with lag_ratio=0.2 for ALL lists — ban FadeIn(entire_group)
 - Use TransformMatchingTex for formula evolution (not ReplacementTransform)
@@ -228,6 +330,14 @@ CS/Programming: box-and-arrow diagrams, array cells, tree structures
       RIGHT:  lambda x: 1/x if abs(x) > 0.01 else 0
 20. NEVER use: get_area(), get_axis_labels(), add_coordinates(), include_numbers,
     axis_config, include_tip, always_redraw(), DecimalNumber(num_decimal_places=).
+21. NEVER place text at the right edge of the frame. All text must have x-position
+    between -5.5 and 4.5 to leave margin. Use .set_width(min(mob.get_width(), 10.0))
+    on any text that might be long.
+22. AFTER creating Axes(), you MUST ALWAYS call axes.set_height(5.0).set_width(10.0)
+    to constrain the graph to the visible frame. Without this, graphs WILL overflow.
+    Pattern: axes = Axes(x_range=..., y_range=...)
+             axes.set_height(5.0).set_width(10.0)
+             axes.move_to(DOWN * 0.3)
 """
 
 
@@ -407,6 +517,19 @@ class ScriptGenerator:
             if "FadeOut(m) for m in self.mobjects" not in code:
                 errors.append(f"Scene {idx+1}: missing final FadeOut cleanup — add self.play(*[FadeOut(m) for m in self.mobjects]).")
 
+        # Count scenes with visual structures (not just stacked Text)
+        visual_structure_count = 0
+        for scene in scenes:
+            code = scene.get("manim_code") or ""
+            has_visual = any(token in code for token in (
+                "Arrow(", "RoundedRectangle(", "Square(", "Circle(",
+                "Axes(", "NumberPlane(", "Dot(", "Line(", "Brace(",
+                "SurroundingRectangle(", "Polygon(", "RegularPolygon(",
+                "get_graph(", "VGroup(",
+            ))
+            if has_visual:
+                visual_structure_count += 1
+
         if total_duration < 55:
             errors.append(f"Total duration too short ({total_duration:.1f}s). Target >= 60s.")
         if not has_graph:
@@ -415,6 +538,11 @@ class ScriptGenerator:
             errors.append("Missing equation/derivation scene with Transform steps.")
         if not has_non_text_anim:
             errors.append("Scenes are text-only; must include visual objects/animations.")
+        if visual_structure_count < 3:
+            errors.append(
+                f"Only {visual_structure_count} scenes have visual structures (trees, tables, "
+                "diagrams, graphs). Need at least 3. Convert text-only scenes into visual diagrams."
+            )
 
         return errors
 
@@ -490,6 +618,7 @@ RUNNABLE ManimGL Python code. Each scene's code:
 3. MUST define exactly ONE Scene subclass named Scene{{scene_index:03d}}
    (e.g. Scene000, Scene001, Scene002, ...)
 4. MUST implement construct(self) with rich animations
+   The FIRST line of construct() MUST be: self.camera.background_color = BLACK
 5. MUST be 40-80+ lines of actual animation code (NOT just text display)
 6. MUST produce a video of AT LEAST the duration_hint_seconds length
    (use self.wait() to pad timing — add waits after each animation block)
@@ -528,9 +657,15 @@ Additional rules:
 1. When stacking with .arrange(DOWN), limit to 4-5 items max, then
    .move_to(DOWN * 0.3) to center the group in the main area.
 2. For Axes: axes.move_to(DOWN * 0.3) to keep below title.
+   Scale axes to fit: axes.set_height(5.0).set_width(10.0).move_to(DOWN * 0.3)
 3. VGroup with many elements: cap with .set_height(5.5).
 4. Side-by-side layouts: .arrange(RIGHT, buff=1.0), cap with .set_width(12).
 5. NEVER .shift() with magnitude > 3.5 from ORIGIN.
+6. Bar charts: max bar height of 4.0 units. After building any VGroup of bars/rectangles:
+     group.set_height(min(group.get_height(), 5.0)).move_to(DOWN * 0.3)
+7. Post-build height safety for ANY visual group:
+     if group.get_height() > 5.5:
+         group.set_height(5.5).move_to(DOWN * 0.3)
 
 === ANIMATION QUALITY RULES ===
 1. PROGRESSIVE BUILDUP: Each element appears one at a time with self.play().
@@ -583,16 +718,18 @@ import numpy as np
 
 class Scene001(Scene):
     def construct(self):
+        self.camera.background_color = BLACK
         # TITLE at grid TITLE_POS
         title = Text("Understanding Derivatives", font_size=42)
         title.move_to(UP * 3.2)
         self.play(Write(title), run_time=2)
         self.wait(1)
 
-        # AXES at grid MAIN_AREA
+        # AXES at grid MAIN_AREA — MUST scale to fit frame
         axes = Axes(
             x_range=[-3, 3, 1], y_range=[-1, 9, 2],
         )
+        axes.set_height(5.0).set_width(10.0)
         axes.move_to(DOWN * 0.3)
         x_lab = Tex(r"x").scale(0.8).next_to(axes.x_axis, RIGHT, buff=0.2)
         y_lab = Tex(r"f(x)").scale(0.8).next_to(axes.y_axis, UP, buff=0.2)
@@ -636,6 +773,7 @@ import numpy as np
 
 class Scene002(Scene):
     def construct(self):
+        self.camera.background_color = BLACK
         # TITLE at grid TITLE_POS
         title = Text("Solving Quadratics", font_size=42)
         title.move_to(UP * 3.2)
@@ -687,6 +825,7 @@ import numpy as np
 
 class Scene003(Scene):
     def construct(self):
+        self.camera.background_color = BLACK
         # TITLE at grid TITLE_POS
         title = Text("Key Principles of Evolution", font_size=44, weight=BOLD)
         title.move_to(UP * 3.2)

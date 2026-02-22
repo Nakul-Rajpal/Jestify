@@ -1,6 +1,5 @@
 """Celery worker entry point for the video generation pipeline."""
 
-import asyncio
 import json
 import logging
 import os
@@ -8,7 +7,6 @@ import subprocess
 import sys
 import time
 import traceback
-import uuid as _uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -82,9 +80,20 @@ app.conf.update(
     accept_content=["json"],
     result_serializer="json",
     task_track_started=True,
-    task_acks_late=True,
+    task_acks_late=False,
+    task_reject_on_worker_lost=True,
     worker_prefetch_multiplier=1,
 )
+
+
+@app.on_after_configure.connect
+def purge_stale_tasks(sender, **kwargs):
+    """Purge any stale tasks left in the queue from a previous worker session."""
+    try:
+        purged = sender.control.purge()
+        logger.info("[worker] Purged %d stale tasks from queue on startup", purged or 0)
+    except Exception as e:
+        logger.warning("[worker] Could not purge stale tasks: %s", e)
 
 
 def _redis_client():
@@ -134,42 +143,43 @@ def _persist_job_to_db(
     video_path: Optional[str] = None,
     error_message: Optional[str] = None,
 ):
-    """Persist final job state to PostgreSQL so it survives Redis TTL expiration."""
-
-    async def _do_update():
-        from backend.app.database import async_session_factory
-        from backend.app.models.job import Job
-        from sqlalchemy import select
-
-        async with async_session_factory() as session:
-            try:
-                result = await session.execute(
-                    select(Job).where(Job.id == _uuid.UUID(job_id))
-                )
-                job = result.scalar_one_or_none()
-                if job is None:
-                    logger.warning(f"Job {job_id} not found in DB for persistence")
-                    return
-
-                job.status = status
-                job.progress_percent = progress_percent
-                job.current_step = current_step
-                if video_path is not None:
-                    job.video_path = video_path
-                if error_message is not None:
-                    job.error_message = error_message
-                job.updated_at = datetime.now(timezone.utc)
-
-                await session.commit()
-                logger.info(f"Persisted job {job_id} to DB: status={status}, video_path={video_path}")
-            except Exception as e:
-                await session.rollback()
-                logger.error(f"Failed to persist job {job_id} to DB: {e}", exc_info=True)
-
+    """Persist final job state to PostgreSQL (synchronous — safe for Celery workers)."""
     try:
-        asyncio.run(_do_update())
+        from sqlalchemy import create_engine, text
+        from pipeline.config import DATABASE_URL
+
+        sync_url = DATABASE_URL.replace("+asyncpg", "").replace("+aiopg", "")
+
+        engine = create_engine(sync_url)
+        with engine.connect() as conn:
+            result = conn.execute(
+                text("""
+                    UPDATE jobs SET
+                        status = :status,
+                        progress_percent = :progress_percent,
+                        current_step = :current_step,
+                        video_path = COALESCE(:video_path, video_path),
+                        error_message = COALESCE(:error_message, error_message),
+                        updated_at = NOW()
+                    WHERE id = :job_id
+                """),
+                {
+                    "job_id": job_id,
+                    "status": status,
+                    "progress_percent": progress_percent,
+                    "current_step": current_step,
+                    "video_path": video_path,
+                    "error_message": error_message,
+                },
+            )
+            conn.commit()
+            if result.rowcount:
+                logger.info("Persisted job %s to DB: status=%s", job_id, status)
+            else:
+                logger.warning("Job %s not found in DB for persistence", job_id)
+        engine.dispose()
     except Exception as e:
-        logger.error(f"DB persistence failed for job {job_id}: {e}", exc_info=True)
+        logger.error("DB persistence failed for job %s: %s", job_id, e)
 
 
 # --------------------------------------------------------------------------- #
@@ -208,8 +218,12 @@ def generate_video_task(
         _update_redis_progress(
             job_id,
             status=JobStatus.GENERATING_SCRIPT.value,
-            progress_percent=10,
-            current_step="Generating educational script with AI...",
+            progress_percent=5,
+            current_step=(
+                "Analyzing your material and writing an educational script — "
+                "AI is designing scene-by-scene animations, narration, and visual layouts. "
+                "This usually takes 30-60 seconds."
+            ),
         )
 
         step_t0 = time.perf_counter()
@@ -241,8 +255,11 @@ def generate_video_task(
         _update_redis_progress(
             job_id,
             status=JobStatus.RENDERING_ANIMATIONS.value,
-            progress_percent=20,
-            current_step="Script generated. Starting animation rendering...",
+            progress_percent=15,
+            current_step=(
+                f"Script complete — {len(script.scenes)} scenes planned. "
+                "Preparing animation rendering pipeline..."
+            ),
         )
 
         from pipeline.config import STORAGE_PATH
@@ -262,12 +279,27 @@ def generate_video_task(
         logger.info("[worker] ── Step 3/3: Running rendering pipeline ──")
         from pipeline.orchestrator import PipelineOrchestrator
 
+        scene_count = len(script.scenes)
+
         def _on_progress(status: JobStatus, progress_pct: int):
             step_messages = {
-                JobStatus.RENDERING_ANIMATIONS: "Rendering animations...",
-                JobStatus.SYNTHESIZING_VOICE: "Synthesizing character voice...",
-                JobStatus.COMPOSITING: "Compositing character overlay...",
-                JobStatus.ASSEMBLING: "Assembling final video...",
+                JobStatus.RENDERING_ANIMATIONS: (
+                    f"Rendering {scene_count} animation scenes with Manim — "
+                    "creating graphs, equations, and visual diagrams. "
+                    "This is the longest step and usually takes 2-4 minutes."
+                ),
+                JobStatus.SYNTHESIZING_VOICE: (
+                    f"Generating AI voiceover for {scene_count} scenes — "
+                    "synthesizing natural speech for each narration segment."
+                ),
+                JobStatus.COMPOSITING: (
+                    f"Compositing {scene_count} scenes — overlaying character, "
+                    "audio, and animations into unified video clips."
+                ),
+                JobStatus.ASSEMBLING: (
+                    "Assembling final video — combining all scenes into one "
+                    "seamless MP4 with transitions and encoding for playback."
+                ),
             }
             msg = step_messages.get(status, "Processing...")
             logger.info("[worker] Progress: %s %d%% — %s", status.value, progress_pct, msg)

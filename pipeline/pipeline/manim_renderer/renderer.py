@@ -104,6 +104,8 @@ class ManimRenderer:
             env["TEXMFCNF"] = self._texmfcnf
         if self._texmfdist:
             env["TEXMFDIST"] = self._texmfdist
+        if self._engine == "gl":
+            env["DISPLAY"] = ""
         logger.info("[render] │  TEXMFCNF=%s TEXMFDIST=%s", self._texmfcnf, self._texmfdist)
 
         t0 = time.perf_counter()
@@ -167,7 +169,7 @@ class ManimRenderer:
         return cmd
 
     def _build_gl_command(self, scene_py: Path, class_name: str, output_dir: Path) -> list[str]:
-        """Build command for ManimGL (fallback)."""
+        """Build command for ManimGL."""
         manimgl_path = shutil.which("manimgl")
         cmd = []
         if platform.system() == "Linux" and shutil.which("xvfb-run"):
@@ -177,8 +179,11 @@ class ManimRenderer:
             str(scene_py),
             class_name,
             "-o",
+            "-w",
             "--file_name", class_name,
             "--video_dir", str(output_dir),
+            "-r", "1920x1080",
+            "-c", "#000000",
         ])
         return cmd
 
@@ -383,6 +388,26 @@ class ManimRenderer:
             flags=_re.MULTILINE,
         )
 
+        # ── Enforce Axes scaling so graphs fit within the frame ──────────
+        # Find `var = Axes(...)` lines and inject .set_height/.set_width
+        # if the code doesn't already scale them.
+        def _inject_axes_scaling(m: _re.Match) -> str:
+            indent = m.group(1)
+            var_name = m.group(2)
+            axes_call = m.group(3)
+            rest_of_line = m.group(4) if m.group(4) else ""
+            line = f"{indent}{var_name} = {axes_call}{rest_of_line}"
+            if "set_height" not in rest_of_line and "set_width" not in rest_of_line:
+                line += f"\n{indent}{var_name}.set_height(5.0).set_width(10.0)"
+            return line
+
+        source = _re.sub(
+            r'^([ \t]*)(\w+)\s*=\s*(Axes\([^)]*\))(.*?)$',
+            _inject_axes_scaling,
+            source,
+            flags=_re.MULTILINE,
+        )
+
         # ── Remove plugin imports (from manim_* import ...) ──────────────
         source = _re.sub(r'^from\s+manim_\w+\s+import\s+.*$', '# removed plugin import', source, flags=_re.MULTILINE)
 
@@ -411,15 +436,22 @@ class ManimRenderer:
             source,
         )
 
-        # ── Inject final FadeOut if construct() doesn't end with one ─────
-        if 'def construct(self)' in source and 'FadeOut(m) for m in self.mobjects' not in source:
-            # Find last self.wait() or self.play() and append cleanup
+        # ── Inject self.camera.background_color = BLACK if missing ────────
+        if 'def construct(self)' in source and 'background_color' not in source:
             source = _re.sub(
-                r'([ \t]+)(self\.wait\(\d+\))\s*$',
-                r'\1\2\n\1self.play(*[FadeOut(m) for m in self.mobjects], run_time=1.5)\n\1self.wait(1)',
+                r'(def construct\(self\):\s*\n)',
+                r'\1        self.camera.background_color = BLACK\n',
                 source,
                 count=1,
-                flags=_re.MULTILINE,
+            )
+
+        # ── Inject final FadeOut if construct() doesn't end with one ─────
+        if 'def construct(self)' in source and 'FadeOut(m) for m in self.mobjects' not in source:
+            source = source.rstrip()
+            indent = "        "
+            source += (
+                f"\n{indent}self.play(*[FadeOut(m) for m in self.mobjects], run_time=1.5)"
+                f"\n{indent}self.wait(1)\n"
             )
 
         return source

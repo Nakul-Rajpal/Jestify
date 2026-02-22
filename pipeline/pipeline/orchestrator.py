@@ -73,7 +73,7 @@ class PipelineOrchestrator:
 
             # ── Stage 1: Manim rendering ───────────────────────────────── #
             logger.info("[orchestrator] ══ STAGE 1/4: Manim Rendering ══")
-            self._on_progress(JobStatus.RENDERING_ANIMATIONS, 0)
+            self._on_progress(JobStatus.RENDERING_ANIMATIONS, 20)
             stage_t0 = time.perf_counter()
 
             rendered: list[tuple[SceneInstruction, str]] = []
@@ -145,7 +145,7 @@ class PipelineOrchestrator:
                         idx + 1, MAX_RENDER_RETRIES, elapsed, last_error[:200],
                     )
 
-                pct = int(((idx + 1) / total_scenes) * 25)
+                pct = 20 + int(((idx + 1) / total_scenes) * 20)
                 self._on_progress(JobStatus.RENDERING_ANIMATIONS, pct)
 
             stage_elapsed = time.perf_counter() - stage_t0
@@ -171,7 +171,7 @@ class PipelineOrchestrator:
 
             # ── Stage 2: Voice synthesis ────────────────────────────────── #
             logger.info("[orchestrator] ══ STAGE 2/4: Voice Synthesis ══")
-            self._on_progress(JobStatus.SYNTHESIZING_VOICE, 25)
+            self._on_progress(JobStatus.SYNTHESIZING_VOICE, 40)
             stage_t0 = time.perf_counter()
 
             audio_clips: list[str] = []
@@ -200,7 +200,7 @@ class PipelineOrchestrator:
                     logger.error("[orchestrator] ✗ Voice %d FAILED: %s", idx + 1, e)
                     logger.error("[orchestrator]   Traceback:\n%s", traceback.format_exc())
                     raise
-                pct = 25 + int(((idx + 1) / len(rendered)) * 25)
+                pct = 40 + int(((idx + 1) / len(rendered)) * 20)
                 self._on_progress(JobStatus.SYNTHESIZING_VOICE, pct)
 
             stage_elapsed = time.perf_counter() - stage_t0
@@ -208,7 +208,7 @@ class PipelineOrchestrator:
 
             # ── Stage 3: Character overlay ──────────────────────────────── #
             logger.info("[orchestrator] ══ STAGE 3/4: Character Overlay ══")
-            self._on_progress(JobStatus.COMPOSITING, 50)
+            self._on_progress(JobStatus.COMPOSITING, 60)
             stage_t0 = time.perf_counter()
 
             composited_clips: list[str] = []
@@ -237,7 +237,7 @@ class PipelineOrchestrator:
                     logger.error("[orchestrator] ✗ Composite %d FAILED: %s", idx + 1, e)
                     logger.error("[orchestrator]   Traceback:\n%s", traceback.format_exc())
                     raise
-                pct = 50 + int(((idx + 1) / len(rendered)) * 25)
+                pct = 60 + int(((idx + 1) / len(rendered)) * 20)
                 self._on_progress(JobStatus.COMPOSITING, pct)
 
             stage_elapsed = time.perf_counter() - stage_t0
@@ -245,7 +245,7 @@ class PipelineOrchestrator:
 
             # ── Stage 4: Final assembly ──────────────────────────────────── #
             logger.info("[orchestrator] ══ STAGE 4/4: Final Assembly ══")
-            self._on_progress(JobStatus.ASSEMBLING, 75)
+            self._on_progress(JobStatus.ASSEMBLING, 80)
             stage_t0 = time.perf_counter()
 
             output_path = pipeline_input.output_path
