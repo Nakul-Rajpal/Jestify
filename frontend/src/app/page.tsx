@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import Image from "next/image";
 import {
   Character,
   Difficulty,
@@ -15,6 +16,7 @@ import DifficultySelector from "@/components/DifficultySelector";
 import InputBar from "@/components/InputBar";
 import JobStatusComponent from "@/components/JobStatus";
 import VideoPlayer from "@/components/VideoPlayer";
+import NeuralBackground from "@/components/ui/flow-field-background";
 
 export default function Home() {
   const [selectedCharacter, setSelectedCharacter] = useState<Character | null>(
@@ -91,20 +93,44 @@ export default function Home() {
   const isJobFailed = status === JobStatusEnum.FAILED;
 
   const hasActiveJob = isJobActive || isJobComplete || isJobFailed;
-  const inputDisabled = !selectedCharacter || !selectedDifficulty;
+  const inputDisabled = selectedCharacter === null || selectedDifficulty === null;
 
   return (
-    <div className="flex flex-col min-h-screen bg-neutral-900 text-white">
+    <div className="purple-gradient-stage relative flex min-h-screen flex-col overflow-hidden text-white">
+      <div className="pointer-events-none absolute inset-0 z-0 opacity-55">
+        <NeuralBackground
+          className="bg-transparent"
+          color="#d946ef"
+          trailOpacity={0.08}
+          particleCount={560}
+          speed={0.72}
+          mouseMode="attract"
+          mouseStrength={0.065}
+          interactionRadius={220}
+        />
+      </div>
+
       {/* Header */}
-      <header className="flex items-center justify-center pt-6 pb-2 px-4">
-        <h1 className="text-xl font-semibold tracking-tight">
-          <span className="text-white">Jest</span>
-          <span className="text-neutral-400">ify</span>
+      <header className="relative z-10 flex flex-col items-center justify-center px-4 pb-1 pt-4">
+        <div className="relative -mt-1">
+          <Image
+            src="/jestify-v2.png"
+            alt="Jestify"
+            width={224}
+            height={224}
+            className="h-56 w-56 object-contain relative z-10"
+            priority
+          />
+          <span className="logo-unglow" aria-hidden="true" />
+        </div>
+        <h1 className="neo-grotesk-wordmark">
+          <span className="text-[#8b5cf6]">J E S T</span>
+          <span className="text-[#facc15]"> I F Y</span>
         </h1>
       </header>
 
       {/* Main content area */}
-      <main className="flex-1 flex flex-col items-center px-4 pb-40">
+      <main className="relative z-10 flex flex-1 flex-col items-center px-4 pb-40">
         {/* Selectors section — show when no active job */}
         {!hasActiveJob && (
           <div className="w-full max-w-3xl mt-8 space-y-6">
@@ -118,32 +144,6 @@ export default function Home() {
               onSelect={setSelectedDifficulty}
               disabled={isGenerating || isPolling}
             />
-          </div>
-        )}
-
-        {/* Welcome message — show when no job and selectors are ready */}
-        {!hasActiveJob && selectedCharacter && selectedDifficulty && (
-          <div className="flex-1 flex items-center justify-center mt-12">
-            <div className="text-center max-w-md">
-              <p className="text-neutral-400 text-sm">
-                Upload your documents and describe what you want to learn.
-                <br />
-                We will generate a video taught by your chosen character.
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* Welcome message — show when selectors are not complete */}
-        {!hasActiveJob && (!selectedCharacter || !selectedDifficulty) && (
-          <div className="flex-1 flex items-center justify-center mt-12">
-            <div className="text-center max-w-md">
-              <p className="text-neutral-500 text-sm">
-                {!selectedCharacter
-                  ? "Select a character to get started"
-                  : "Select a difficulty level"}
-              </p>
-            </div>
           </div>
         )}
 

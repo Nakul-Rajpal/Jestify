@@ -62,8 +62,8 @@ export default function DocumentUpload({
         onClick={openFilePicker}
         disabled={disabled || isUploading}
         className={`
-          p-2 rounded-lg transition-colors duration-200 cursor-pointer
-          text-neutral-400 hover:text-white hover:bg-neutral-700
+          liquid-glass-pill p-2 rounded-xl transition-colors duration-200 cursor-pointer
+          text-white/75 hover:text-white
           ${disabled || isUploading ? "opacity-50 cursor-not-allowed" : ""}
         `}
         title="Attach documents"

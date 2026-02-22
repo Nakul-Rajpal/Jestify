@@ -94,7 +94,7 @@ export default function InputBar({
 
   return (
     <div
-      className="fixed bottom-0 left-0 right-0 bg-gradient-to-t from-neutral-900 via-neutral-900 to-transparent pt-6 pb-4 px-4"
+      className="fixed bottom-0 left-0 right-0 z-40 bg-gradient-to-t from-[#090510]/95 via-[#0f0a1f]/72 to-transparent pt-7 pb-5 px-4"
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
       onDragOver={handleDragOver}
@@ -103,8 +103,8 @@ export default function InputBar({
       <div className="max-w-3xl mx-auto relative">
         {/* Drag overlay */}
         {isDragOver && (
-          <div className="absolute inset-0 -top-20 border-2 border-dashed border-blue-400 bg-blue-400/10 rounded-2xl flex items-center justify-center z-10 pointer-events-none">
-            <div className="text-blue-400 font-medium text-lg">
+          <div className="absolute inset-0 -top-20 border-2 border-dashed border-fuchsia-300/70 bg-fuchsia-300/12 rounded-3xl flex items-center justify-center z-10 pointer-events-none backdrop-blur-md">
+            <div className="text-fuchsia-100 font-medium text-lg">
               Drop files here
             </div>
           </div>
@@ -116,10 +116,10 @@ export default function InputBar({
             {uploadedDocs.map((doc) => (
               <div
                 key={doc.id}
-                className="flex items-center gap-1.5 bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-1.5 text-sm"
+                className="liquid-glass-chip flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm"
               >
                 <svg
-                  className="w-3.5 h-3.5 text-neutral-400 shrink-0"
+                  className="w-3.5 h-3.5 text-white/70 shrink-0"
                   viewBox="0 0 24 24"
                   fill="none"
                   stroke="currentColor"
@@ -130,12 +130,12 @@ export default function InputBar({
                   <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
                   <polyline points="14 2 14 8 20 8" />
                 </svg>
-                <span className="text-neutral-300 max-w-[150px] truncate">
+                <span className="text-white/85 max-w-[150px] truncate">
                   {doc.filename}
                 </span>
                 <button
                   onClick={() => onRemoveDoc(doc.id)}
-                  className="text-neutral-500 hover:text-neutral-300 ml-0.5 cursor-pointer"
+                  className="text-white/60 hover:text-white ml-0.5 cursor-pointer"
                 >
                   <svg
                     className="w-3.5 h-3.5"
@@ -158,9 +158,11 @@ export default function InputBar({
         {/* Input container */}
         <div
           className={`
-            flex items-end gap-2 bg-neutral-800 border rounded-2xl px-4 py-3
+            liquid-glass-toolbar flex items-center gap-2 rounded-[1.6rem] px-4 py-3
+            ring-1 ring-fuchsia-200/45
+            shadow-[0_0_0_1px_rgba(248,205,255,0.25),0_22px_55px_rgba(123,29,180,0.45)]
             transition-colors duration-200
-            ${isDragOver ? "border-blue-400" : "border-neutral-700"}
+            ${isDragOver ? "border-fuchsia-200/70" : "border-white/30"}
             ${disabled ? "opacity-60" : ""}
           `}
         >
@@ -181,7 +183,7 @@ export default function InputBar({
             }
             disabled={disabled || isGenerating}
             rows={1}
-            className="flex-1 bg-transparent text-white placeholder-neutral-500 resize-none outline-none text-sm leading-6 max-h-32 min-h-[24px]"
+            className={`flex-1 bg-transparent text-white placeholder:text-white/60 resize-none outline-none text-sm leading-6 max-h-32 min-h-[24px] ${prompt.length === 0 ? "text-center" : "text-left"}`}
             style={{ height: "24px" }}
             onInput={(e) => {
               const target = e.target as HTMLTextAreaElement;
@@ -194,11 +196,11 @@ export default function InputBar({
             onClick={handleSubmit}
             disabled={!canSubmit}
             className={`
-              p-2 rounded-lg transition-all duration-200 cursor-pointer
+              p-2 rounded-xl transition-all duration-200 cursor-pointer
               ${
                 canSubmit
-                  ? "bg-white text-neutral-900 hover:bg-neutral-200"
-                  : "bg-neutral-700 text-neutral-500 cursor-not-allowed"
+                  ? "bg-gradient-to-br from-fuchsia-200 to-violet-300 text-violet-950 hover:from-fuchsia-100 hover:to-violet-200 shadow-[0_8px_20px_rgba(198,105,255,0.35)]"
+                  : "bg-white/12 text-white/45 cursor-not-allowed border border-white/15"
               }
             `}
             title="Generate video"
@@ -240,9 +242,6 @@ export default function InputBar({
           </button>
         </div>
 
-        <p className="text-xs text-neutral-500 text-center mt-2">
-          Upload documents and describe your topic. Jestify will generate an educational video.
-        </p>
       </div>
     </div>
   );
