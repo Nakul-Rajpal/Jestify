@@ -11,28 +11,28 @@ interface CharacterOption {
 
 const CHARACTERS: CharacterOption[] = [
   {
-    id: Character.SPONGEBOB,
+    id: Character.LEBRON,
     name: "LeBron James",
     description: "Energetic coaching style that breaks concepts into practical steps.",
     imageSrc: "/characters/lebron.png",
   },
   {
-    id: Character.SUPERMAN,
+    id: Character.GOKU,
     name: "Goku",
     description: "High-energy explanations with a focus on momentum and confidence.",
     imageSrc: "/characters/goku.png",
   },
   {
-    id: Character.EINSTEIN,
+    id: Character.PETER,
     name: "Peter",
     description: "Casual, humorous teaching style with simple relatable examples.",
     imageSrc: "/characters/peter.png",
   },
   {
-    id: Character.PIRATE,
-    name: "Alyssa",
+    id: Character.ROGAN,
+    name: "Rogan",
     description: "Calm and clear delivery focused on clarity and step-by-step flow.",
-    imageSrc: "/characters/alyssa.png",
+    imageSrc: "/characters/rogan.png",
   },
 ];
 
