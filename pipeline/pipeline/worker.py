@@ -1,5 +1,6 @@
 """Celery worker entry point for the video generation pipeline."""
 
+import asyncio
 import json
 import logging
 import os
@@ -7,6 +8,7 @@ import subprocess
 import sys
 import time
 import traceback
+import uuid as _uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -120,6 +122,60 @@ def _update_redis_progress(
         logger.warning("[worker] Failed to update Redis progress for job %s: %s", job_id, e)
 
 
+# --------------------------------------------------------------------------- #
+# Database persistence
+# --------------------------------------------------------------------------- #
+
+def _persist_job_to_db(
+    job_id: str,
+    status: str,
+    progress_percent: int,
+    current_step: str,
+    video_path: Optional[str] = None,
+    error_message: Optional[str] = None,
+):
+    """Persist final job state to PostgreSQL so it survives Redis TTL expiration."""
+
+    async def _do_update():
+        from backend.app.database import async_session_factory
+        from backend.app.models.job import Job
+        from sqlalchemy import select
+
+        async with async_session_factory() as session:
+            try:
+                result = await session.execute(
+                    select(Job).where(Job.id == _uuid.UUID(job_id))
+                )
+                job = result.scalar_one_or_none()
+                if job is None:
+                    logger.warning(f"Job {job_id} not found in DB for persistence")
+                    return
+
+                job.status = status
+                job.progress_percent = progress_percent
+                job.current_step = current_step
+                if video_path is not None:
+                    job.video_path = video_path
+                if error_message is not None:
+                    job.error_message = error_message
+                job.updated_at = datetime.now(timezone.utc)
+
+                await session.commit()
+                logger.info(f"Persisted job {job_id} to DB: status={status}, video_path={video_path}")
+            except Exception as e:
+                await session.rollback()
+                logger.error(f"Failed to persist job {job_id} to DB: {e}", exc_info=True)
+
+    try:
+        asyncio.run(_do_update())
+    except Exception as e:
+        logger.error(f"DB persistence failed for job {job_id}: {e}", exc_info=True)
+
+
+# --------------------------------------------------------------------------- #
+# Celery task — matches the name the backend dispatches
+# --------------------------------------------------------------------------- #
+
 @app.task(bind=True, name="backend.app.tasks.video_task.generate_video_task")
 def generate_video_task(
     self,
@@ -128,6 +184,7 @@ def generate_video_task(
     difficulty: str,
     extracted_text: str,
     prompt: Optional[str] = None,
+    voice_id: Optional[str] = None,
 ):
     """Main Celery task picked up by the pipeline worker."""
     task_t0 = time.perf_counter()
@@ -198,6 +255,7 @@ def generate_video_task(
             script=script,
             character=Character(character),
             output_path=output_path,
+            voice_id=voice_id,
         )
 
         # ── Step 3: Run pipeline ────────────────────────────────────── #
@@ -241,6 +299,15 @@ def generate_video_task(
         logger.info("[worker] Duration: %.1fs", output.duration_seconds)
         logger.info("=" * 70)
 
+        # Persist final state to database
+        _persist_job_to_db(
+            job_id=job_id,
+            status=JobStatus.COMPLETED.value,
+            progress_percent=100,
+            current_step="Video generation complete.",
+            video_path=output.video_path,
+        )
+
         return {
             "job_id": job_id,
             "status": "completed",
@@ -257,6 +324,13 @@ def generate_video_task(
         logger.error("=" * 70)
         _update_redis_progress(
             job_id,
+            status=JobStatus.FAILED.value,
+            progress_percent=0,
+            current_step="Failed",
+            error_message=str(e),
+        )
+        _persist_job_to_db(
+            job_id=job_id,
             status=JobStatus.FAILED.value,
             progress_percent=0,
             current_step="Failed",

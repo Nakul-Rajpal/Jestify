@@ -180,6 +180,7 @@ class PipelineOrchestrator:
                         text=scene.narration_text,
                         character_id=character.value,
                         output_path=audio_path,
+                        voice_id=pipeline_input.voice_id,
                     )
                     audio_size = Path(audio_path).stat().st_size / 1024
                     elapsed = time.perf_counter() - voice_t0

@@ -10,6 +10,7 @@ class GenerateRequest(BaseModel):
     difficulty: Difficulty
     document_ids: List[str]
     prompt: Optional[str] = None
+    voice_id: Optional[str] = None
 
 
 class GenerateResponse(BaseModel):
@@ -48,3 +49,59 @@ class CharacterInfo(BaseModel):
 
 class CharacterListResponse(BaseModel):
     characters: List[CharacterInfo]
+
+
+# --- Library types ---
+
+
+class TopicSummary(BaseModel):
+    id: str
+    name: str
+    description: Optional[str] = None
+    sort_order: int
+    video_count: int
+
+
+class SubjectSummary(BaseModel):
+    id: str
+    name: str
+    description: Optional[str] = None
+    category: str
+    topic_count: int
+    video_count: int
+    topics: List[TopicSummary]
+
+
+class LibraryResponse(BaseModel):
+    subjects: List[SubjectSummary]
+
+
+class VideoSummary(BaseModel):
+    job_id: str
+    title: str
+    character: str
+    difficulty: str
+    video_url: str
+    thumbnail_url: Optional[str] = None
+    created_at: datetime
+
+
+class TopicDetailResponse(BaseModel):
+    id: str
+    name: str
+    description: Optional[str] = None
+    sort_order: int
+    subject_name: str
+    videos: List[VideoSummary]
+
+
+class VoiceInfo(BaseModel):
+    id: str
+    name: str
+    description: str
+    is_public: bool
+    language: Optional[str] = None
+
+
+class VoiceListResponse(BaseModel):
+    voices: List[VoiceInfo]

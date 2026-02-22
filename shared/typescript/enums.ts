@@ -1,8 +1,8 @@
 export enum Character {
-  SPONGEBOB = "spongebob",
-  SUPERMAN = "superman",
-  EINSTEIN = "einstein",
-  PIRATE = "pirate",
+  LEBRON = "lebron",
+  GOKU = "goku",
+  PETER = "peter",
+  ROGAN = "rogan",
 }
 
 export enum Difficulty {

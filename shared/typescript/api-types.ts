@@ -5,6 +5,7 @@ export interface GenerateRequest {
   difficulty: Difficulty;
   document_ids: string[];
   prompt?: string;
+  voice_id?: string;
 }
 
 export interface GenerateResponse {
@@ -43,4 +44,16 @@ export interface CharacterInfo {
 
 export interface CharacterListResponse {
   characters: CharacterInfo[];
+}
+
+export interface VoiceInfo {
+  id: string;
+  name: string;
+  description: string;
+  is_public: boolean;
+  language: string | null;
+}
+
+export interface VoiceListResponse {
+  voices: VoiceInfo[];
 }

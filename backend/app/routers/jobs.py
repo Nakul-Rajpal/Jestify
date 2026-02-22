@@ -114,15 +114,23 @@ async def get_job_video(
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found.")
 
-    if not job.video_path:
-        raise HTTPException(status_code=404, detail="Video not yet available for this job.")
+    # Try 1: Use video_path from database if it exists on disk
+    if job.video_path:
+        video_path = Path(job.video_path)
+        if video_path.exists():
+            return FileResponse(
+                path=str(video_path),
+                media_type="video/mp4",
+                filename=f"jestify_{job_id}.mp4",
+            )
 
-    video_path = Path(job.video_path)
-    if not video_path.exists():
-        raise HTTPException(status_code=404, detail="Video file not found on disk.")
+    # Try 2: Fallback to conventional storage path
+    fallback_path = Path(settings.STORAGE_PATH) / "videos" / job_id / "final.mp4"
+    if fallback_path.exists():
+        return FileResponse(
+            path=str(fallback_path),
+            media_type="video/mp4",
+            filename=f"jestify_{job_id}.mp4",
+        )
 
-    return FileResponse(
-        path=str(video_path),
-        media_type="video/mp4",
-        filename=f"jestify_{job_id}.mp4",
-    )
+    raise HTTPException(status_code=404, detail="Video not yet available for this job.")

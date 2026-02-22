@@ -1,6 +1,7 @@
 """Router for document upload and retrieval endpoints."""
 
-import os
+import asyncio
+import logging
 import uuid
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from ..models.document import Document
 from ..services.document_processor import DocumentProcessor
 
 router = APIRouter(prefix="/documents", tags=["documents"])
+logger = logging.getLogger(__name__)
 
 # Allowed MIME types mapped to document types
 MIME_TYPE_MAP: dict[str, DocumentType] = {
@@ -24,6 +26,7 @@ MIME_TYPE_MAP: dict[str, DocumentType] = {
     "image/png": DocumentType.IMAGE,
     "image/jpeg": DocumentType.IMAGE,
     "image/jpg": DocumentType.IMAGE,
+    "image/gif": DocumentType.IMAGE,
     "image/webp": DocumentType.IMAGE,
     "image/tiff": DocumentType.IMAGE,
     "text/plain": DocumentType.TEXT,
@@ -71,9 +74,28 @@ async def upload_document(
     with open(file_path, "wb") as f:
         f.write(content)
 
-    # Extract text
+    # Extract text with timeout so uploads never block indefinitely.
     processor = DocumentProcessor()
-    extracted_text = processor.extract_text(str(file_path), mime_type)
+    try:
+        extracted_text = await asyncio.wait_for(
+            asyncio.to_thread(processor.extract_text, str(file_path), mime_type),
+            timeout=settings.DOCUMENT_EXTRACT_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "Text extraction timed out after %ss for %s (%s)",
+            settings.DOCUMENT_EXTRACT_TIMEOUT_SECONDS,
+            file.filename,
+            mime_type,
+        )
+        extracted_text = ""
+    except Exception:
+        logger.exception(
+            "Text extraction failed for %s (%s); storing empty extracted_text.",
+            file.filename,
+            mime_type,
+        )
+        extracted_text = ""
 
     # Create database record
     document = Document(

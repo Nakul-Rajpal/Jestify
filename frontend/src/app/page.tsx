@@ -7,7 +7,8 @@ import {
   JobStatus as JobStatusEnum,
   UploadedDocument,
 } from "@/types";
-import { generateVideo } from "@/lib/api";
+import Link from "next/link";
+import { generateVideo, BASE_URL } from "@/lib/api";
 import { useJobPolling } from "@/hooks/useJobPolling";
 import { useDocumentUpload } from "@/hooks/useDocumentUpload";
 import CharacterSelector from "@/components/CharacterSelector";
@@ -29,7 +30,7 @@ export default function Home() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
 
-  const { upload, isUploading } = useDocumentUpload();
+  const { upload, isUploading, error: uploadError } = useDocumentUpload();
   const { status, progress, currentStep, videoUrl, thumbnailUrl, error, isPolling } =
     useJobPolling(currentJobId);
 
@@ -96,11 +97,17 @@ export default function Home() {
   return (
     <div className="flex flex-col min-h-screen bg-neutral-900 text-white">
       {/* Header */}
-      <header className="flex items-center justify-center pt-6 pb-2 px-4">
+      <header className="flex items-center justify-between pt-6 pb-2 px-4 max-w-4xl mx-auto w-full">
         <h1 className="text-xl font-semibold tracking-tight">
           <span className="text-white">Jest</span>
           <span className="text-neutral-400">ify</span>
         </h1>
+        <Link
+          href="/library"
+          className="text-sm text-neutral-400 hover:text-white transition-colors"
+        >
+          Library
+        </Link>
       </header>
 
       {/* Main content area */}
@@ -147,7 +154,15 @@ export default function Home() {
           </div>
         )}
 
-        {/* Error from generation */}
+        {/* Upload / generation errors */}
+        {uploadError && !hasActiveJob && (
+          <div className="mt-6 max-w-md mx-auto">
+            <div className="bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-3 text-center">
+              <p className="text-sm text-red-400">{uploadError}</p>
+            </div>
+          </div>
+        )}
+
         {generateError && !hasActiveJob && (
           <div className="mt-6 max-w-md mx-auto">
             <div className="bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-3 text-center">
@@ -192,8 +207,8 @@ export default function Home() {
         {isJobComplete && videoUrl && (
           <div className="flex-1 flex flex-col items-center justify-center mt-12 gap-4 w-full">
             <VideoPlayer
-              videoUrl={videoUrl}
-              thumbnailUrl={thumbnailUrl}
+              videoUrl={`${BASE_URL}${videoUrl}`}
+              thumbnailUrl={thumbnailUrl ? `${BASE_URL}${thumbnailUrl}` : undefined}
             />
             <button
               onClick={handleNewVideo}

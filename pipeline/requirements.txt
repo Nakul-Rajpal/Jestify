@@ -10,8 +10,9 @@ pydantic-settings
 python-dotenv
 anthropic
 setuptools<78
-# audioop-lts: only for Python 3.13+ (stdlib audioop removed). On 3.12 use stdlib; on 3.13+ run: pip install audioop-lts
-
+audioop-lts
+sqlalchemy[asyncio]>=2.0
+asyncpg>=0.29.0
 # Manim plugins
 manim-chemistry==0.5.1
 manim-automata

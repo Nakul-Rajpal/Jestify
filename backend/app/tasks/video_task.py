@@ -56,6 +56,7 @@ def generate_video_task(
     difficulty: str,
     extracted_text: str,
     prompt: Optional[str] = None,
+    voice_id: Optional[str] = None,
 ) -> dict:
     """Main Celery task that orchestrates the video generation pipeline."""
     task_t0 = time.perf_counter()
@@ -76,7 +77,7 @@ def generate_video_task(
         _update_redis_progress(
             job_id,
             status=JobStatus.GENERATING_SCRIPT.value,
-            progress_percent=10,
+            progress_percent=5,
             current_step="Generating educational script with AI...",
         )
 
@@ -119,6 +120,7 @@ def generate_video_task(
             script=script,
             character=Character(character),
             output_path=output_path,
+            voice_id=voice_id,
         )
 
         logger.info(
@@ -130,10 +132,10 @@ def generate_video_task(
             job_id,
             status=JobStatus.RENDERING_ANIMATIONS.value,
             progress_percent=50,
-            current_step="Rendering ManimGL animations...",
+            current_step="Rendering Manim animations...",
         )
 
-        # TODO: Integrate with the actual ManimGL rendering pipeline
+        # TODO: Integrate with the actual rendering pipeline
         # For now, we log the pipeline input and mark as completed
 
         _update_redis_progress(
@@ -147,6 +149,11 @@ def generate_video_task(
         logger.info("=" * 70)
         logger.info("[video_task] TASK COMPLETE: %s (%.1fs)", job_id, total_elapsed)
         logger.info("=" * 70)
+
+        # Trigger post-processing classification into subject/topic
+        from .classify_task import classify_video_task
+
+        classify_video_task.delay(job_id)
 
         return {
             "job_id": job_id,

@@ -20,7 +20,7 @@ from backend.app.database import Base
 from backend.app.config import settings
 
 # Import all models so they are registered with Base.metadata
-from backend.app.models import Job, Document  # noqa: F401
+from backend.app.models import Job, Document, Subject, Topic  # noqa: F401
 
 # Alembic Config object
 config = context.config

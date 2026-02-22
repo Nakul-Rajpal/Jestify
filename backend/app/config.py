@@ -12,8 +12,15 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://jestify:devpassword@localhost:5432/jestify"
     REDIS_URL: str = "redis://localhost:6379/0"
     ANTHROPIC_API_KEY: str = ""
+    FISH_API_KEY: str = ""
+    FISH_MODEL: str = "s1"
+    FISH_VOICE_ID_LEBRON: str = "ea9a7ea97af942eab87c974d422263fe"
+    FISH_VOICE_ID_GOKU: str = ""
+    FISH_VOICE_ID_PETER: str = ""
+    FISH_VOICE_ID_ROGAN: str = ""
     CONTEXT7_API_KEY: str = ""
-    STORAGE_PATH: str = "./storage"
+    DOCUMENT_EXTRACT_TIMEOUT_SECONDS: int = 30
+    STORAGE_PATH: str = str(PROJECT_ROOT / "storage")
     CORS_ORIGINS: List[str] = ["http://localhost:3000"]
 
     model_config = {

@@ -1,10 +1,10 @@
 // Type definitions matching shared TypeScript contracts
 
 export enum Character {
-  SPONGEBOB = "spongebob",
-  SUPERMAN = "superman",
-  EINSTEIN = "einstein",
-  PIRATE = "pirate",
+  LEBRON = "lebron",
+  GOKU = "goku",
+  PETER = "peter",
+  ROGAN = "rogan",
 }
 
 export enum Difficulty {
@@ -17,6 +17,7 @@ export enum JobStatus {
   PENDING = "pending",
   EXTRACTING_TEXT = "extracting_text",
   GENERATING_SCRIPT = "generating_script",
+  GENERATING_ANIMATIONS = "generating_animations",
   RENDERING_ANIMATIONS = "rendering_animations",
   SYNTHESIZING_VOICE = "synthesizing_voice",
   COMPOSITING = "compositing",
@@ -37,6 +38,7 @@ export interface GenerateRequest {
   difficulty: Difficulty;
   document_ids: string[];
   prompt?: string;
+  voice_id?: string;
 }
 
 export interface GenerateResponse {
@@ -77,9 +79,64 @@ export interface CharacterListResponse {
   characters: CharacterInfo[];
 }
 
+export interface VoiceInfo {
+  id: string;
+  name: string;
+  description: string;
+  is_public: boolean;
+  language: string | null;
+}
+
+export interface VoiceListResponse {
+  voices: VoiceInfo[];
+}
+
 export interface UploadedDocument {
   id: string;
   filename: string;
   document_type: string;
   size_bytes: number;
+}
+
+// --- Library types ---
+
+export interface TopicSummary {
+  id: string;
+  name: string;
+  description: string | null;
+  sort_order: number;
+  video_count: number;
+}
+
+export interface SubjectSummary {
+  id: string;
+  name: string;
+  description: string | null;
+  category: string;
+  topic_count: number;
+  video_count: number;
+  topics: TopicSummary[];
+}
+
+export interface LibraryResponse {
+  subjects: SubjectSummary[];
+}
+
+export interface VideoSummary {
+  job_id: string;
+  title: string;
+  character: string;
+  difficulty: string;
+  video_url: string;
+  thumbnail_url: string | null;
+  created_at: string;
+}
+
+export interface TopicDetailResponse {
+  id: string;
+  name: string;
+  description: string | null;
+  sort_order: number;
+  subject_name: string;
+  videos: VideoSummary[];
 }
