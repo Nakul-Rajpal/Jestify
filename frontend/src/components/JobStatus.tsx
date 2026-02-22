@@ -12,8 +12,18 @@ interface JobStatusProps {
 
 function getStatusMessage(
   status: JobStatusEnum,
-  character: Character | null
+  character: Character | null,
+  currentStep: string
 ): string {
+  if (
+    currentStep &&
+    status !== JobStatusEnum.PENDING &&
+    status !== JobStatusEnum.COMPLETED &&
+    status !== JobStatusEnum.FAILED
+  ) {
+    return currentStep;
+  }
+
   const charName = getCharacterName(character);
 
   switch (status) {
@@ -64,7 +74,7 @@ export default function JobStatusComponent({
   character,
   error,
 }: JobStatusProps) {
-  const message = getStatusMessage(status, character);
+  const message = getStatusMessage(status, character, currentStep);
   const isFailed = status === JobStatusEnum.FAILED;
   const isComplete = status === JobStatusEnum.COMPLETED;
 

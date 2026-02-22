@@ -10,6 +10,7 @@ import platform
 import shutil
 import subprocess
 import tempfile
+import time
 import wave
 from pathlib import Path
 from urllib import request, error
@@ -22,73 +23,93 @@ _WORDS_PER_MINUTE = 150
 
 
 class VoiceSynthesizer:
-    """Text-to-speech synthesiser with automatic backend selection.
-
-    Backends (tried in order):
-    1. **edge-tts** — high-quality Microsoft neural voices (pip install edge-tts)
-    2. **macOS say** — built-in on macOS, decent quality, zero dependencies
-    3. **silent fallback** — generates a silent WAV when nothing else works
-    """
+    """Text-to-speech synthesiser with automatic backend selection."""
 
     def __init__(self) -> None:
         self._fish_api_key = FISH_API_KEY
         self._fish_model = FISH_MODEL
+        logger.info("[voice] Detecting TTS backend...")
         self._backend = self._detect_backend()
-        logger.info("VoiceSynthesizer using backend: %s", self._backend)
+        logger.info("[voice] Selected backend: %s", self._backend)
 
     @staticmethod
     def _detect_backend() -> str:
-        # Check edge-tts first (best quality)
         try:
             import edge_tts  # noqa: F401
+            logger.info("[voice]   edge-tts available (pip package found)")
             return "edge-tts"
         except ImportError:
-            pass
+            logger.info("[voice]   edge-tts not installed")
 
-        # macOS say command
         if platform.system() == "Darwin" and shutil.which("say"):
+            logger.info("[voice]   macOS 'say' command available")
             return "macos-say"
 
+        logger.warning("[voice]   No TTS backend found, will use silent fallback")
         return "silent"
 
     def synthesize(
         self,
         text: str,
         character_id: str,
-        voice_id: str | None,
         output_path: str,
+        voice_id: str | None = None,
     ) -> str:
         """Synthesize speech for *text* and write a WAV to *output_path*."""
-        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        word_count = len(text.split())
+        logger.info("[voice] ┌─ Synthesize: backend=%s, character=%s", self._backend, character_id)
+        logger.info("[voice] │  Text: %d chars, %d words", len(text), word_count)
+        logger.info("[voice] │  Preview: %.150s...", text)
+        logger.info("[voice] │  Output: %s", output_path)
 
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        t0 = time.perf_counter()
+
+        # Try Fish Audio first if a voice_id was provided
         if voice_id and self._fish_api_key:
             try:
                 self._synthesize_fish_audio(text, voice_id, output_path)
-                logger.info("Voice synthesized: %s (fish-audio)", output_path)
-                return str(Path(output_path).resolve())
+                elapsed = time.perf_counter() - t0
+                out_file = Path(output_path)
+                logger.info(
+                    "[voice] └─ OK (fish-audio): %s (%.1f KB, %.1fs)",
+                    output_path, out_file.stat().st_size / 1024, elapsed,
+                )
+                return str(out_file.resolve())
             except Exception as exc:
                 logger.warning(
-                    "Fish Audio synthesis failed for voice %s, falling back: %s",
-                    voice_id,
-                    exc,
+                    "[voice] │  Fish Audio synthesis failed for voice %s, falling back: %s",
+                    voice_id, exc,
                 )
 
+        # Fall back to local TTS backends
         try:
             if self._backend == "edge-tts":
                 self._synthesize_edge_tts(text, character_id, output_path)
             elif self._backend == "macos-say":
                 self._synthesize_macos_say(text, output_path)
             else:
-                logger.warning("No TTS backend available — generating silent WAV")
+                logger.warning("[voice] │  No TTS backend — generating silent WAV")
                 duration = self._estimate_duration(text)
+                logger.info("[voice] │  Estimated speech duration: %.1fs", duration)
                 self._write_silent_wav(output_path, duration)
         except Exception as exc:
-            logger.warning("Local TTS backend failed, generating silent WAV: %s", exc)
+            logger.warning("[voice] │  Local TTS backend failed, generating silent WAV: %s", exc)
             duration = self._estimate_duration(text)
+            logger.info("[voice] │  Estimated speech duration: %.1fs", duration)
             self._write_silent_wav(output_path, duration)
 
-        logger.info("Voice synthesized: %s (%s)", output_path, self._backend)
-        return str(Path(output_path).resolve())
+        elapsed = time.perf_counter() - t0
+        out_file = Path(output_path)
+        if out_file.exists():
+            logger.info(
+                "[voice] └─ OK: %s (%.1f KB, %.1fs)",
+                output_path, out_file.stat().st_size / 1024, elapsed,
+            )
+        else:
+            logger.error("[voice] └─ Output file missing after synthesis: %s", output_path)
+
+        return str(out_file.resolve())
 
     # ------------------------------------------------------------------ #
     # Backend: Fish Audio
@@ -147,7 +168,6 @@ class VoiceSynthesizer:
         import asyncio
         import edge_tts
 
-        # Map characters to fitting voices
         voice_map = {
             "lebron": "en-US-ChristopherNeural",
             "goku": "en-US-GuyNeural",
@@ -155,64 +175,64 @@ class VoiceSynthesizer:
             "rogan": "en-US-EricNeural",
         }
         voice = voice_map.get(character_id, "en-US-GuyNeural")
+        logger.info("[voice] │  edge-tts voice: %s (character: %s)", voice, character_id)
 
         async def _run():
             communicate = edge_tts.Communicate(text, voice)
-            # edge-tts outputs MP3; save to temp then convert to WAV
             with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
                 tmp_mp3 = tmp.name
+            logger.info("[voice] │  Saving edge-tts MP3 to: %s", tmp_mp3)
             await communicate.save(tmp_mp3)
 
-            # Convert MP3 to WAV with ffmpeg
+            mp3_size = Path(tmp_mp3).stat().st_size / 1024
+            logger.info("[voice] │  MP3 generated: %.1f KB", mp3_size)
+
             cmd = [
                 "ffmpeg", "-y", "-i", tmp_mp3,
                 "-ar", "22050", "-ac", "1",
                 output_path,
             ]
+            logger.info("[voice] │  Converting MP3->WAV: %s", " ".join(cmd))
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             Path(tmp_mp3).unlink(missing_ok=True)
             if result.returncode != 0:
-                raise RuntimeError(f"ffmpeg MP3→WAV failed: {result.stderr[:500]}")
+                logger.error("[voice] │  ffmpeg MP3->WAV failed (exit %d): %s", result.returncode, result.stderr[:500])
+                raise RuntimeError(f"ffmpeg MP3->WAV failed: {result.stderr[:500]}")
 
         asyncio.run(_run())
 
     # ------------------------------------------------------------------ #
-    # Backend: macOS say command
+    # Backend: macOS say
     # ------------------------------------------------------------------ #
 
     @staticmethod
     def _synthesize_macos_say(text: str, output_path: str) -> None:
-        # say outputs AIFF; we convert to WAV via ffmpeg
         with tempfile.NamedTemporaryFile(suffix=".aiff", delete=False) as tmp:
             tmp_aiff = tmp.name
 
-        # Use a decent macOS voice — "Samantha" is clear and widely available
-        cmd_say = [
-            "say",
-            "-v", "Samantha",
-            "-r", "170",        # words per minute (natural pace)
-            "-o", tmp_aiff,
-            text,
-        ]
+        cmd_say = ["say", "-v", "Samantha", "-r", "170", "-o", tmp_aiff, text]
+        logger.info("[voice] │  Running: say -v Samantha -r 170 -o %s (%d chars)", tmp_aiff, len(text))
 
-        logger.info("Running: say -v Samantha -r 170 -o %s ...", tmp_aiff)
         result = subprocess.run(cmd_say, capture_output=True, text=True, timeout=120)
         if result.returncode != 0:
-            logger.error("say failed: %s", result.stderr)
+            logger.error("[voice] │  'say' failed (exit %d): %s", result.returncode, result.stderr)
             raise RuntimeError(f"macOS say failed: {result.stderr[:500]}")
 
-        # Convert AIFF to WAV
+        aiff_size = Path(tmp_aiff).stat().st_size / 1024
+        logger.info("[voice] │  AIFF generated: %.1f KB", aiff_size)
+
         cmd_ffmpeg = [
             "ffmpeg", "-y", "-i", tmp_aiff,
             "-ar", "22050", "-ac", "1",
             output_path,
         ]
+        logger.info("[voice] │  Converting AIFF->WAV: %s", " ".join(cmd_ffmpeg))
         result = subprocess.run(cmd_ffmpeg, capture_output=True, text=True, timeout=30)
         Path(tmp_aiff).unlink(missing_ok=True)
 
         if result.returncode != 0:
-            logger.error("ffmpeg AIFF→WAV failed: %s", result.stderr)
-            raise RuntimeError(f"ffmpeg AIFF→WAV failed: {result.stderr[:500]}")
+            logger.error("[voice] │  ffmpeg AIFF->WAV failed (exit %d): %s", result.returncode, result.stderr)
+            raise RuntimeError(f"ffmpeg AIFF->WAV failed: {result.stderr[:500]}")
 
     @staticmethod
     def _convert_audio_to_wav(input_path: str, output_path: str) -> None:
@@ -249,3 +269,4 @@ class VoiceSynthesizer:
             wf.setsampwidth(sample_width)
             wf.setframerate(sample_rate)
             wf.writeframes(silent_data)
+        logger.info("[voice] │  Silent WAV written: %s (%.1fs, %d frames)", path, duration_seconds, num_frames)

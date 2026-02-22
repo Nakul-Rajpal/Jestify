@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.contracts.api_types import JobStatusResponse
+from shared.contracts.enums import JobStatus
 
 from ..config import settings
 from ..database import get_db
@@ -35,6 +36,19 @@ async def get_job_status(
     # Try Redis first for live progress
     redis_data = await job_manager.get_job_from_redis(str(job_uuid))
     if redis_data:
+        # Keep DB synced with live Redis progress so UI can recover
+        try:
+            await job_manager.update_job_status(
+                job_uuid,
+                status=redis_data.get("status"),
+                progress_percent=redis_data.get("progress_percent"),
+                current_step=redis_data.get("current_step"),
+                error_message=redis_data.get("error_message"),
+            )
+            await db.commit()
+        except Exception:
+            await db.rollback()
+
         return JobStatusResponse(
             job_id=job_id,
             status=redis_data["status"],
@@ -51,6 +65,21 @@ async def get_job_status(
     job = await job_manager.get_job(job_uuid)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found.")
+
+    # Safety net: if worker wrote output file but DB/Redis missed updates,
+    # surface completion so frontend never hangs on "pending".
+    if job.status != JobStatus.COMPLETED.value:
+        inferred_video = Path(settings.STORAGE_PATH) / "videos" / str(job_uuid) / "final.mp4"
+        if inferred_video.exists():
+            job = await job_manager.update_job_status(
+                job_uuid,
+                status=JobStatus.COMPLETED.value,
+                progress_percent=100,
+                current_step="Video generation complete.",
+                video_path=str(inferred_video),
+                error_message=None,
+            )
+            await db.commit()
 
     video_url = f"/api/jobs/{job_id}/video" if job.video_path else None
     thumbnail_url = f"/api/jobs/{job_id}/thumbnail" if job.thumbnail_path else None

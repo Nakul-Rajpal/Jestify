@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     FISH_VOICE_ID_GOKU: str = ""
     FISH_VOICE_ID_PETER: str = ""
     FISH_VOICE_ID_ROGAN: str = ""
+    CONTEXT7_API_KEY: str = ""
     DOCUMENT_EXTRACT_TIMEOUT_SECONDS: int = 30
     STORAGE_PATH: str = str(PROJECT_ROOT / "storage")
     CORS_ORIGINS: List[str] = ["http://localhost:3000"]

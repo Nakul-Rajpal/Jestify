@@ -24,9 +24,23 @@ Each top-level directory is owned by one collaborator. Communication happens thr
 - FFmpeg
 
 ### 1. Start infrastructure
+
+**Option A — Using Docker (recommended)**  
+This creates the `jestify` user and database automatically:
 ```bash
 docker compose up -d postgres redis
 ```
+
+**Option B — Local PostgreSQL (e.g. Homebrew)**  
+If Postgres runs on your machine and you’re not using Docker, create the role and database once:
+```bash
+# Connect as superuser (often 'postgres' or your Mac username)
+psql postgres -c "CREATE ROLE jestify WITH LOGIN PASSWORD 'devpassword';"
+psql postgres -c "CREATE DATABASE jestify OWNER jestify;"
+```
+
+Your `.env` should have:  
+`DATABASE_URL=postgresql+asyncpg://jestify:devpassword@localhost:5432/jestify`
 
 ### 2. Set up environment
 ```bash

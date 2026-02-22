@@ -49,7 +49,11 @@ services:
 
   pipeline-worker:
     build: ./pipeline
-    command: celery -A pipeline.worker worker -Q video_pipeline -c 1 --loglevel=info
+    command: >-
+      sh -c 'CNF_DIR=$$(kpsewhich texmf.cnf 2>/dev/null | xargs dirname 2>/dev/null);
+      export TEXMFCNF="$${CNF_DIR}:";
+      export TEXMFDIST="$$(dirname "$${CNF_DIR}" 2>/dev/null)";
+      celery -A pipeline.worker worker -Q video_pipeline -c 1 --loglevel=info'
     environment:
       REDIS_URL: redis://redis:6379/0
       FISH_API_KEY: ${FISH_API_KEY}

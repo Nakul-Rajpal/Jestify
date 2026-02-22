@@ -2,6 +2,8 @@
 
 import json
 import logging
+import time
+import traceback
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -39,10 +41,11 @@ def _update_redis_progress(
             "created_at": now,
             "updated_at": now,
         }
-        r.set(f"job:{job_id}", json.dumps(data), ex=3600)  # 1 hour TTL
+        r.set(f"job:{job_id}", json.dumps(data), ex=3600)
         r.close()
+        logger.debug("[video_task] Redis updated: job=%s status=%s pct=%d", job_id, status, progress_percent)
     except Exception as e:
-        logger.warning(f"Failed to update Redis progress for job {job_id}: {e}")
+        logger.warning("[video_task] Failed to update Redis for job %s: %s", job_id, e)
 
 
 @celery_app.task(name="backend.app.tasks.video_task.generate_video_task", bind=True)
@@ -55,56 +58,50 @@ def generate_video_task(
     prompt: Optional[str] = None,
     voice_id: Optional[str] = None,
 ) -> dict:
-    """
-    Main Celery task that orchestrates the video generation pipeline.
+    """Main Celery task that orchestrates the video generation pipeline."""
+    task_t0 = time.perf_counter()
 
-    Steps:
-    1. Generate the educational script using Claude
-    2. Dispatch to the rendering pipeline (ManimGL + TTS + compositing)
-    3. Update job status throughout
-
-    Args:
-        job_id: UUID of the job.
-        character: Character enum value string.
-        difficulty: Difficulty enum value string.
-        extracted_text: Combined extracted text from all documents.
-        prompt: Optional user prompt for additional instructions.
-        voice_id: Optional Fish Audio voice model ID selected by the user.
-
-    Returns:
-        A dict with the pipeline result.
-    """
-    logger.info(f"Starting video generation task for job {job_id}")
+    logger.info("=" * 70)
+    logger.info("[video_task] TASK START: %s", job_id)
+    logger.info("=" * 70)
+    logger.info("[video_task] Character: %s", character)
+    logger.info("[video_task] Difficulty: %s", difficulty)
+    logger.info("[video_task] Prompt: %s", prompt or "(none)")
+    logger.info("[video_task] Extracted text: %d chars", len(extracted_text))
+    logger.info("[video_task] Extracted text preview: %.300s...", extracted_text)
+    logger.info("[video_task] Celery task ID: %s", self.request.id)
 
     try:
-        # Step 1: Generate script (two-phase: narration then manim code)
+        # ── Step 1: Generate script ─────────────────────────────────── #
+        logger.info("[video_task] ── Step 1: Script Generation ──")
         _update_redis_progress(
             job_id,
             status=JobStatus.GENERATING_SCRIPT.value,
             progress_percent=5,
-            current_step="Generating educational narration script...",
+            current_step="Generating educational script with AI...",
         )
 
+        step_t0 = time.perf_counter()
         from ..services.script_generator import ScriptGenerator
 
         generator = ScriptGenerator()
-
-        def _on_script_progress(phase: str, pct: int):
-            if phase == "generating_animations":
-                _update_redis_progress(
-                    job_id,
-                    status=JobStatus.GENERATING_ANIMATIONS.value,
-                    progress_percent=pct,
-                    current_step="Designing ManimGL animation code...",
-                )
-
         script = generator.generate(
             extracted_text=extracted_text,
             character=Character(character),
             difficulty=Difficulty(difficulty),
             user_prompt=prompt,
-            on_progress=_on_script_progress,
         )
+        step_elapsed = time.perf_counter() - step_t0
+
+        logger.info("[video_task] Script generated in %.1fs", step_elapsed)
+        logger.info("[video_task]   Title: %s", script.title)
+        logger.info("[video_task]   Total scenes: %d", script.total_scenes)
+        for i, s in enumerate(script.scenes):
+            logger.info(
+                "[video_task]   Scene %d: type=%s, duration=%.0fs, narration=%d chars",
+                i + 1, s.manim_scene_type, s.duration_hint_seconds,
+                len(s.narration_text),
+            )
 
         _update_redis_progress(
             job_id,
@@ -113,8 +110,11 @@ def generate_video_task(
             current_step="Script generated. Rendering animations...",
         )
 
-        # Step 2: Build pipeline input
+        # ── Step 2: Build pipeline input ────────────────────────────── #
+        logger.info("[video_task] ── Step 2: Building pipeline input ──")
         output_path = f"{settings.STORAGE_PATH}/videos/{job_id}"
+        logger.info("[video_task] Output path: %s", output_path)
+
         pipeline_input = PipelineInput(
             job_id=job_id,
             script=script,
@@ -123,23 +123,20 @@ def generate_video_task(
             voice_id=voice_id,
         )
 
-        # Step 3: Dispatch to pipeline worker
-        # TODO: Integrate with the actual ManimGL rendering pipeline
-        # For now, we log the pipeline input and mark as completed
         logger.info(
-            f"Pipeline input ready for job {job_id}: "
-            f"{script.total_scenes} scenes, character={character}"
+            "[video_task] Pipeline input ready: %d scenes, character=%s",
+            script.total_scenes, character,
         )
 
         _update_redis_progress(
             job_id,
             status=JobStatus.RENDERING_ANIMATIONS.value,
             progress_percent=50,
-            current_step="Rendering ManimGL animations...",
+            current_step="Rendering Manim animations...",
         )
 
-        # Placeholder: actual rendering, TTS, and compositing would happen here
-        # The pipeline would call _update_redis_progress at each stage
+        # TODO: Integrate with the actual rendering pipeline
+        # For now, we log the pipeline input and mark as completed
 
         _update_redis_progress(
             job_id,
@@ -147,6 +144,11 @@ def generate_video_task(
             progress_percent=100,
             current_step="Video generation complete.",
         )
+
+        total_elapsed = time.perf_counter() - task_t0
+        logger.info("=" * 70)
+        logger.info("[video_task] TASK COMPLETE: %s (%.1fs)", job_id, total_elapsed)
+        logger.info("=" * 70)
 
         # Trigger post-processing classification into subject/topic
         from .classify_task import classify_video_task
@@ -161,7 +163,12 @@ def generate_video_task(
         }
 
     except Exception as e:
-        logger.error(f"Video generation failed for job {job_id}: {e}", exc_info=True)
+        total_elapsed = time.perf_counter() - task_t0
+        logger.error("=" * 70)
+        logger.error("[video_task] TASK FAILED: %s after %.1fs", job_id, total_elapsed)
+        logger.error("[video_task] Error: %s", e)
+        logger.error("[video_task] Traceback:\n%s", traceback.format_exc())
+        logger.error("=" * 70)
         _update_redis_progress(
             job_id,
             status=JobStatus.FAILED.value,
