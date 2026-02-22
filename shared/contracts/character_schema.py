@@ -68,19 +68,19 @@ CHARACTER_PERSONALITIES: dict[Character, CharacterPersonality] = {
         ),
         fish_voice_id="445c35f86b8547da870609b66e6b5d7d",
     ),
-    Character.ALYSA: CharacterPersonality(
-        id=Character.ALYSA,
-        display_name="Alysa Liu",
-        voice_style="calm, clear, confident, step-by-step",
-        analogy_domain="precision, practice, flow, building from basics",
-        catchphrases=["Let's walk through this", "Step by step", "Nice and clear"],
-        tone="calm and clear, focused on clarity and step-by-step flow",
+    Character.TAYLOR: CharacterPersonality(
+        id=Character.TAYLOR,
+        display_name="Taylor Swift",
+        voice_style="clear, expressive, story-driven, confident",
+        analogy_domain="songwriting, eras, storytelling, creative structure",
+        catchphrases=["Let's break this down", "See the pattern", "Here's the key idea"],
+        tone="engaging and structured, teaching through stories and patterns",
         background=(
-            "Alysa Liu's teaching style is calm, precise, and methodical. She breaks down complex "
-            "ideas into clear sequential steps, making sure each concept is understood before moving "
-            "on. Her delivery is confident but approachable, emphasizing clarity over complexity. "
-            "She connects ideas to practical understanding and builds from fundamentals upward."
+            "Taylor Swift's teaching style is expressive, structured, and narrative. She explains "
+            "ideas by identifying themes, motifs, and the progression from simple concepts to full "
+            "mastery. Her delivery is clear and memorable, using story flow and recurring patterns "
+            "to make difficult material easier to understand."
         ),
-        fish_voice_id="9eb13940358f431498cb1db15fd5ec22",
+        fish_voice_id="2b5de5ebb7c14b72b516292b9b04d80d",
     ),
 }

@@ -19,8 +19,8 @@ class CharacterCompositor:
         character_sprite: str,
         audio_file: str,
         output_path: str,
-        position: str = "bottom-right",
-        scale: float = 0.25,
+        position: str = "top-left",
+        scale: float = 0.28,
     ) -> str:
         """Composite character sprite and audio onto the animation clip."""
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
@@ -53,7 +53,7 @@ class CharacterCompositor:
             filter_complex = (
                 f"[1:v]scale=iw*{scale}:ih*{scale}[sprite];"
                 f"[0:v][sprite]overlay={overlay_pos}[vout];"
-                f"[2:a]apad[aout]"
+                "[2:a]aresample=async=1:first_pts=0[aout]"
             )
             cmd = [
                 "ffmpeg", "-y",
@@ -62,9 +62,10 @@ class CharacterCompositor:
                 "-i", audio_file,
                 "-filter_complex", filter_complex,
                 "-map", "[vout]", "-map", "[aout]",
-                "-c:v", "libx264", "-preset", "fast",
+                "-c:v", "libx264", "-preset", "superfast",
                 "-c:a", "aac", "-b:a", "192k",
                 "-shortest",
+                "-movflags", "+faststart",
                 output_path,
             ]
             logger.info("[compositor] │  Mode: sprite overlay + audio mix")
@@ -74,10 +75,11 @@ class CharacterCompositor:
                 "ffmpeg", "-y",
                 "-i", animation_clip,
                 "-i", audio_file,
-                "-filter_complex", "[1:a]apad[aout]",
+                "-filter_complex", "[1:a]aresample=async=1:first_pts=0[aout]",
                 "-map", "0:v", "-map", "[aout]",
                 "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
                 "-shortest",
+                "-movflags", "+faststart",
                 output_path,
             ]
 
@@ -115,5 +117,7 @@ class CharacterCompositor:
             "bottom-left": "10:main_h-overlay_h-10",
             "top-right": "main_w-overlay_w-10:10",
             "top-left": "10:10",
+            "middle-left": "24:(main_h-overlay_h)/2",
+            "middle-right": "main_w-overlay_w-24:(main_h-overlay_h)/2",
         }
-        return positions.get(position, positions["bottom-right"])
+        return positions.get(position, positions["top-left"])

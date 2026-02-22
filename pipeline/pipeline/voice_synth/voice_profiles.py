@@ -37,8 +37,8 @@ CHARACTER_VOICE_PROFILES: dict[str, dict] = {
         ),
         "language": "English",
     },
-    "alysa": {
-        "ref_audio_path": str(_ASSETS / "characters" / "alysa" / "voice_ref.wav"),
+    "taylor": {
+        "ref_audio_path": str(_ASSETS / "characters" / "taylor" / "voice_ref.wav"),
         "ref_transcript": (
             "Let's walk through this step by step. "
             "Once you see the pattern, it all makes sense."

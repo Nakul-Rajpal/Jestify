@@ -46,10 +46,17 @@ MAX_RENDER_RETRIES = 4
 MAX_FAILED_SCENES_BEFORE_ABORT = 4
 _CODE_FIX_MODEL = "claude-sonnet-4-20250514"
 
-# Concurrency limits
-MAX_RENDER_WORKERS = 3   # CPU-bound (Manim subprocesses)
-MAX_VOICE_WORKERS = 6    # Network-bound (Fish Audio API)
-MAX_COMPOSITE_WORKERS = 2  # CPU-bound (FFmpeg subprocesses)
+def _env_int(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.getenv(name, str(default))))
+    except Exception:
+        return default
+
+
+# Concurrency limits (configurable via env)
+MAX_RENDER_WORKERS = _env_int("MAX_RENDER_WORKERS", 4)      # CPU-bound (Manim subprocesses)
+MAX_VOICE_WORKERS = _env_int("MAX_VOICE_WORKERS", 8)        # Network-bound (Fish Audio API)
+MAX_COMPOSITE_WORKERS = _env_int("MAX_COMPOSITE_WORKERS", 3)  # CPU-bound (FFmpeg subprocesses)
 
 
 class PipelineOrchestrator:

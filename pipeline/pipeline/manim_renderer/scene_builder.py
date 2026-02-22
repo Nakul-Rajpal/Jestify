@@ -53,6 +53,7 @@ class SceneBuilder:
         # Always convert MathTex/Tex → Text to prevent LaTeX compilation errors.
         # This runs BEFORE AST validation so the resulting code is valid Python.
         source = self._replace_latex_with_text(source)
+        source = self._normalize_timing(source, scene.duration_hint_seconds)
 
         class_name = self._extract_class_name(source)
         if not class_name:
@@ -96,6 +97,46 @@ class SceneBuilder:
             fs = int(m.group(1))
             return f"font_size={max(fs, 24)}"
         return re.sub(r'font_size\s*=\s*(\d+)', _clamp, source)
+
+    @staticmethod
+    def _normalize_timing(source: str, target_seconds: float) -> str:
+        """Scale literal run_time/self.wait durations down to match target scene length."""
+        run_matches = list(re.finditer(r'run_time\s*=\s*(\d+(?:\.\d+)?)', source))
+        wait_matches = list(re.finditer(r'self\.wait\(\s*(\d+(?:\.\d+)?)\s*\)', source))
+        if not run_matches and not wait_matches:
+            return source
+
+        run_total = sum(float(m.group(1)) for m in run_matches)
+        wait_total = sum(float(m.group(1)) for m in wait_matches)
+        estimated_total = run_total + wait_total
+        target = max(6.0, float(target_seconds or 0))
+
+        if estimated_total <= 0 or estimated_total <= target * 1.15:
+            return source
+
+        scale = max(0.25, min(1.0, target / estimated_total))
+
+        def _fmt(value: float) -> str:
+            s = f"{value:.2f}"
+            return s.rstrip("0").rstrip(".")
+
+        def _scale_run(m: re.Match) -> str:
+            current = float(m.group(1))
+            scaled = max(0.3, min(1.5, current * scale))
+            return f"run_time={_fmt(scaled)}"
+
+        def _scale_wait(m: re.Match) -> str:
+            current = float(m.group(1))
+            scaled = max(0.15, min(1.0, current * scale))
+            return f"self.wait({_fmt(scaled)})"
+
+        source = re.sub(r'run_time\s*=\s*(\d+(?:\.\d+)?)', _scale_run, source)
+        source = re.sub(r'self\.wait\(\s*(\d+(?:\.\d+)?)\s*\)', _scale_wait, source)
+        logger.info(
+            "[scene_builder] │  Timing normalized: %.1fs -> target %.1fs (scale=%.2f)",
+            estimated_total, target, scale,
+        )
+        return source
 
     def _sanitize_code(self, source: str) -> str:
         """Clean up common LLM code generation issues."""
@@ -271,8 +312,8 @@ class {class_name}(Scene):
             first_sentence = re.split(r'[.!?]', scene.narration_text)[0].strip()
             title = first_sentence[:72] if first_sentence else "Concept Visual"
         title_escaped = title.replace('"', '\\"').replace("'", "\\'")[:80]
-        duration = max(20, int(scene.duration_hint_seconds))
-        hold = max(4, duration - 14)
+        duration = max(8, int(scene.duration_hint_seconds or 10))
+        hold = max(0.8, duration - 8)
 
         phrases = self._extract_key_phrases(scene.narration_text)
         p1 = phrases[0].replace('"', '\\"')
@@ -319,7 +360,7 @@ class {class_name}(Scene):
         self.play(MoveAlongPath(moving_dot, graph), run_time=3)
         self.wait(1)
 
-        note = Text("{p3[:48]}", font_size=26, color=YELLOW).move_to(DOWN * 2.8)
+        note = Text("{p3[:48]}", font_size=26, color=YELLOW).next_to(axes, UP, buff=0.6)
         self.play(Write(note), run_time=2)
         self.wait({hold})
 """

@@ -46,11 +46,15 @@ class VideoAssembler:
 
         cmd = [
             "ffmpeg", "-y",
+            "-fflags", "+genpts",
             "-f", "concat", "-safe", "0",
             "-i", concat_file,
-            "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2",
-            "-c:v", "libx264", "-preset", "medium", "-crf", "23",
+            "-map", "0:v:0", "-map", "0:a:0?",
+            "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2",
+            "-af", "aresample=async=1:first_pts=0",
+            "-c:v", "libx264", "-preset", "superfast", "-crf", "26",
             "-c:a", "aac", "-b:a", "192k",
+            "-shortest",
             "-movflags", "+faststart",
             output_path,
         ]

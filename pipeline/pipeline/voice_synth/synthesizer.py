@@ -6,8 +6,10 @@ silent WAV only if no TTS backend is available.
 
 import json
 import logging
+import os
 import platform
 import shutil
+import ssl
 import subprocess
 import tempfile
 import time
@@ -28,11 +30,34 @@ class VoiceSynthesizer:
     """Text-to-speech synthesiser with automatic backend selection."""
 
     def __init__(self) -> None:
+        self._sanitize_ssl_env()
         self._fish_api_key = FISH_API_KEY
         self._fish_model = FISH_MODEL
-        logger.info("[voice] Detecting TTS backend...")
-        self._backend = self._detect_backend()
-        logger.info("[voice] Selected backend: %s", self._backend)
+        self._fish_timeout_seconds = int(os.getenv("FISH_TIMEOUT_SECONDS", "20"))
+        self._fish_fallback_voice_id = os.getenv("FISH_FALLBACK_VOICE_ID", "").strip() or None
+        self._fish_global_voice_ids = self._collect_global_fish_voice_ids()
+        self._allow_silent_fallback = os.getenv("ALLOW_SILENT_FALLBACK", "false").lower() in {"1", "true", "yes"}
+        logger.info("[voice] Detecting local TTS backends...")
+        self._local_backends = self._detect_local_backends()
+        logger.info("[voice] Local backends: %s", self._local_backends or ["none"])
+        logger.info("[voice] Allow silent fallback: %s", self._allow_silent_fallback)
+        logger.info("[voice] Fish timeout: %ss", self._fish_timeout_seconds)
+        if self._fish_fallback_voice_id:
+            logger.info("[voice] Fish fallback voice id configured: %s", self._fish_fallback_voice_id)
+        if self._fish_global_voice_ids:
+            logger.info("[voice] Fish configured voice ids discovered: %d", len(self._fish_global_voice_ids))
+
+    @staticmethod
+    def _sanitize_ssl_env() -> None:
+        for env_key in ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE"):
+            env_val = os.getenv(env_key)
+            if env_val and not Path(env_val).exists():
+                logger.warning(
+                    "[voice] %s points to missing file '%s'; unsetting",
+                    env_key,
+                    env_val,
+                )
+                os.environ.pop(env_key, None)
 
     @staticmethod
     def _resolve_fish_voice_id(character_id: str, voice_id: str | None) -> str | None:
@@ -50,20 +75,36 @@ class VoiceSynthesizer:
         return None
 
     @staticmethod
-    def _detect_backend() -> str:
+    def _collect_global_fish_voice_ids() -> list[str]:
+        ids: list[str] = []
+        for key in (
+            "FISH_VOICE_ID_LEBRON",
+            "FISH_VOICE_ID_GOKU",
+            "FISH_VOICE_ID_PETER",
+            "FISH_VOICE_ID_TAYLOR",
+        ):
+            value = os.getenv(key, "").strip()
+            if value and value not in ids:
+                ids.append(value)
+        return ids
+
+    @staticmethod
+    def _detect_local_backends() -> list[str]:
+        backends: list[str] = []
         try:
             import edge_tts  # noqa: F401
             logger.info("[voice]   edge-tts available (pip package found)")
-            return "edge-tts"
+            backends.append("edge-tts")
         except ImportError:
             logger.info("[voice]   edge-tts not installed")
 
         if platform.system() == "Darwin" and shutil.which("say"):
             logger.info("[voice]   macOS 'say' command available")
-            return "macos-say"
+            backends.append("macos-say")
 
-        logger.warning("[voice]   No TTS backend found, will use silent fallback")
-        return "silent"
+        if not backends:
+            logger.warning("[voice]   No local TTS backend found")
+        return backends
 
     def synthesize(
         self,
@@ -74,52 +115,79 @@ class VoiceSynthesizer:
     ) -> str:
         """Synthesize speech for *text* and write a WAV to *output_path*."""
         word_count = len(text.split())
-        logger.info("[voice] ┌─ Synthesize: backend=%s, character=%s", self._backend, character_id)
+        logger.info("[voice] ┌─ Synthesize: character=%s", character_id)
         logger.info("[voice] │  Text: %d chars, %d words", len(text), word_count)
         logger.info("[voice] │  Preview: %.150s...", text)
         logger.info("[voice] │  Output: %s", output_path)
 
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
         t0 = time.perf_counter()
+        errors: list[str] = []
 
         # Resolve Fish voice ID: explicit > character default
         resolved_voice_id = self._resolve_fish_voice_id(character_id, voice_id)
         if resolved_voice_id:
             logger.info("[voice] │  Fish voice ID: %s", resolved_voice_id)
 
-        # Try Fish Audio first if a voice ID is available
-        if resolved_voice_id and self._fish_api_key:
+        # Try Fish Audio first if a voice ID is available.
+        fish_voice_candidates: list[str] = []
+        if resolved_voice_id:
+            fish_voice_candidates.append(resolved_voice_id)
+        if self._fish_fallback_voice_id and self._fish_fallback_voice_id not in fish_voice_candidates:
+            fish_voice_candidates.append(self._fish_fallback_voice_id)
+        for candidate in self._fish_global_voice_ids:
+            if candidate not in fish_voice_candidates:
+                fish_voice_candidates.append(candidate)
+
+        if fish_voice_candidates and self._fish_api_key:
+            for fish_voice_id in fish_voice_candidates:
+                try:
+                    self._synthesize_fish_audio(text, fish_voice_id, output_path)
+                    elapsed = time.perf_counter() - t0
+                    out_file = Path(output_path)
+                    logger.info(
+                        "[voice] └─ OK (fish-audio voice=%s): %s (%.1f KB, %.1fs)",
+                        fish_voice_id, output_path, out_file.stat().st_size / 1024, elapsed,
+                    )
+                    return str(out_file.resolve())
+                except Exception as exc:
+                    msg = f"fish voice {fish_voice_id}: {exc}"
+                    errors.append(msg)
+                    logger.warning("[voice] │  Fish Audio failed (%s)", msg)
+
+        # Fall back to local TTS backends in sequence.
+        for backend in self._local_backends:
             try:
-                self._synthesize_fish_audio(text, resolved_voice_id, output_path)
+                if backend == "edge-tts":
+                    self._synthesize_edge_tts(text, character_id, output_path)
+                elif backend == "macos-say":
+                    self._synthesize_macos_say(text, output_path)
+                else:
+                    continue
                 elapsed = time.perf_counter() - t0
                 out_file = Path(output_path)
                 logger.info(
-                    "[voice] └─ OK (fish-audio): %s (%.1f KB, %.1fs)",
-                    output_path, out_file.stat().st_size / 1024, elapsed,
+                    "[voice] └─ OK (%s): %s (%.1f KB, %.1fs)",
+                    backend, output_path, out_file.stat().st_size / 1024, elapsed,
                 )
                 return str(out_file.resolve())
             except Exception as exc:
-                logger.warning(
-                    "[voice] │  Fish Audio synthesis failed for voice %s, falling back: %s",
-                    resolved_voice_id, exc,
-                )
+                msg = f"{backend}: {exc}"
+                errors.append(msg)
+                logger.warning("[voice] │  Local backend failed (%s)", msg)
 
-        # Fall back to local TTS backends
-        try:
-            if self._backend == "edge-tts":
-                self._synthesize_edge_tts(text, character_id, output_path)
-            elif self._backend == "macos-say":
-                self._synthesize_macos_say(text, output_path)
-            else:
-                logger.warning("[voice] │  No TTS backend — generating silent WAV")
-                duration = self._estimate_duration(text)
-                logger.info("[voice] │  Estimated speech duration: %.1fs", duration)
-                self._write_silent_wav(output_path, duration)
-        except Exception as exc:
-            logger.warning("[voice] │  Local TTS backend failed, generating silent WAV: %s", exc)
-            duration = self._estimate_duration(text)
-            logger.info("[voice] │  Estimated speech duration: %.1fs", duration)
-            self._write_silent_wav(output_path, duration)
+        # Final fallback behavior.
+        if not self._allow_silent_fallback:
+            detail = "; ".join(errors[:4]) if errors else "no TTS backends available"
+            raise RuntimeError(
+                "Voice synthesis failed and silent fallback is disabled. "
+                f"Attempts: {detail}. "
+                "Set ALLOW_SILENT_FALLBACK=true to permit silent audio."
+            )
+        logger.warning("[voice] │  All voice backends failed, generating silent WAV")
+        duration = self._estimate_duration(text)
+        logger.info("[voice] │  Estimated speech duration: %.1fs", duration)
+        self._write_silent_wav(output_path, duration)
 
         elapsed = time.perf_counter() - t0
         out_file = Path(output_path)
@@ -138,38 +206,47 @@ class VoiceSynthesizer:
     # ------------------------------------------------------------------ #
 
     def _synthesize_fish_audio(self, text: str, voice_id: str, output_path: str) -> None:
-        payload = {
-            "text": text,
-            "reference_id": voice_id,
-            "format": "wav",
-            "model": self._fish_model,
-        }
-        req = request.Request(
-            url="https://api.fish.audio/v1/tts",
-            method="POST",
-            headers={
-                "Authorization": f"Bearer {self._fish_api_key}",
-                "Content-Type": "application/json",
-            },
-            data=json.dumps(payload).encode("utf-8"),
-        )
-        try:
-            with request.urlopen(req, timeout=120) as resp:
-                audio_bytes = resp.read()
-        except error.HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="ignore")
-            raise RuntimeError(
-                f"Fish Audio TTS failed ({exc.code}): {body[:300]}"
-            ) from exc
-        except error.URLError as exc:
-            raise RuntimeError(f"Fish Audio request failed: {exc}") from exc
+        errors: list[str] = []
+        audio_bytes: bytes | None = None
+        for voice_key in ("reference_id", "voice_id"):
+            payload = {
+                "text": text,
+                voice_key: voice_id,
+                "format": "wav",
+                "model": self._fish_model,
+            }
+            req = request.Request(
+                url="https://api.fish.audio/v1/tts",
+                method="POST",
+                headers={
+                    "Authorization": f"Bearer {self._fish_api_key}",
+                    "Content-Type": "application/json",
+                },
+                data=json.dumps(payload).encode("utf-8"),
+            )
+            try:
+                with request.urlopen(
+                    req,
+                    timeout=self._fish_timeout_seconds,
+                    context=self._build_ssl_context(),
+                ) as resp:
+                    audio_bytes = resp.read()
+                if audio_bytes:
+                    break
+                errors.append(f"{voice_key}: empty response")
+            except error.HTTPError as exc:
+                body = exc.read().decode("utf-8", errors="ignore")
+                errors.append(f"{voice_key} HTTP {exc.code}: {body[:180]}")
+            except error.URLError as exc:
+                errors.append(f"{voice_key} URL error: {exc}")
 
         if not audio_bytes:
-            raise RuntimeError("Fish Audio returned empty audio payload")
+            raise RuntimeError(f"Fish Audio request failed. Attempts: {'; '.join(errors)}")
 
         # Most responses should already be WAV with format="wav".
         if audio_bytes[:4] == b"RIFF":
             Path(output_path).write_bytes(audio_bytes)
+            self._assert_nonempty_wav(output_path, "fish-audio")
             return
 
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
@@ -178,8 +255,19 @@ class VoiceSynthesizer:
 
         try:
             self._convert_audio_to_wav(tmp_path, output_path)
+            self._assert_nonempty_wav(output_path, "fish-audio-converted")
         finally:
             Path(tmp_path).unlink(missing_ok=True)
+
+    @staticmethod
+    def _build_ssl_context() -> ssl.SSLContext:
+        """Use certifi CA bundle when available to avoid local trust-store issues."""
+        try:
+            import certifi
+
+            return ssl.create_default_context(cafile=certifi.where())
+        except Exception:
+            return ssl.create_default_context()
 
     # ------------------------------------------------------------------ #
     # Backend: edge-tts (best quality)
@@ -194,7 +282,7 @@ class VoiceSynthesizer:
             "lebron": "en-US-ChristopherNeural",
             "goku": "en-US-GuyNeural",
             "peter": "en-US-DavisNeural",
-            "alysa": "en-US-AnaNeural",
+            "taylor": "en-US-AnaNeural",
         }
         voice = voice_map.get(character_id, "en-US-GuyNeural")
         logger.info("[voice] │  edge-tts voice: %s (character: %s)", voice, character_id)
@@ -220,6 +308,7 @@ class VoiceSynthesizer:
             if result.returncode != 0:
                 logger.error("[voice] │  ffmpeg MP3->WAV failed (exit %d): %s", result.returncode, result.stderr[:500])
                 raise RuntimeError(f"ffmpeg MP3->WAV failed: {result.stderr[:500]}")
+            VoiceSynthesizer._assert_nonempty_wav(output_path, "edge-tts")
 
         asyncio.run(_run())
 
@@ -255,6 +344,7 @@ class VoiceSynthesizer:
         if result.returncode != 0:
             logger.error("[voice] │  ffmpeg AIFF->WAV failed (exit %d): %s", result.returncode, result.stderr)
             raise RuntimeError(f"ffmpeg AIFF->WAV failed: {result.stderr[:500]}")
+        VoiceSynthesizer._assert_nonempty_wav(output_path, "macos-say")
 
     @staticmethod
     def _convert_audio_to_wav(input_path: str, output_path: str) -> None:
@@ -266,6 +356,21 @@ class VoiceSynthesizer:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         if result.returncode != 0:
             raise RuntimeError(f"ffmpeg conversion failed: {result.stderr[:500]}")
+
+    @staticmethod
+    def _assert_nonempty_wav(path: str, backend_label: str) -> None:
+        wav_path = Path(path)
+        if not wav_path.exists():
+            raise RuntimeError(f"{backend_label} produced no WAV output")
+        if wav_path.stat().st_size < 1024:
+            raise RuntimeError(f"{backend_label} produced tiny WAV ({wav_path.stat().st_size} bytes)")
+        try:
+            with wave.open(str(wav_path), "rb") as wf:
+                duration = wf.getnframes() / max(wf.getframerate(), 1)
+            if duration < 0.15:
+                raise RuntimeError(f"{backend_label} produced near-empty WAV ({duration:.3f}s)")
+        except wave.Error as exc:
+            raise RuntimeError(f"{backend_label} output is not a readable WAV: {exc}") from exc
 
     # ------------------------------------------------------------------ #
     # Fallback: silent WAV

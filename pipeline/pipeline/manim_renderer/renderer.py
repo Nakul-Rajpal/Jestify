@@ -179,7 +179,7 @@ class ManimRenderer:
             "render",
             str(scene_py),
             class_name,
-            "-qm",
+            "-ql",
             "--format=mp4",
             f"--media_dir={output_dir}",
         ])
@@ -426,7 +426,7 @@ class ManimRenderer:
         # ── LAYOUT ENFORCEMENT ───────────────────────────────────────────
 
         # Cap Text/MathTex width after assignment:
-        #   var = Text(...)  →  var = Text(...)\n  var.set(width=min(var.width, 10.0))
+        #   var = Text(...)  →  var = Text(...)\n  var.set(width=min(var.width, 8.5))
         def _inject_text_width_cap(m: _re.Match) -> str:
             indent = m.group(1)
             var = m.group(2)
@@ -434,7 +434,7 @@ class ManimRenderer:
             line = f"{indent}{var} = {rest}"
             # Don't double-inject if already capped
             if "set_width" not in rest and "set(width" not in rest:
-                line += f"\n{indent}{var}.set(width=min({var}.width, 10.0))"
+                line += f"\n{indent}{var}.set(width=min({var}.width, 8.5))"
             return line
 
         source = _re.sub(
@@ -445,14 +445,14 @@ class ManimRenderer:
         )
 
         # Cap VGroup height after .arrange():
-        #   group.arrange(DOWN, ...)  →  group.arrange(DOWN, ...)\n  group.set(height=min(group.height, 5.5))
+        #   group.arrange(DOWN, ...)  →  group.arrange(DOWN, ...)\n  group.set(height=min(group.height, 4.8))
         def _inject_vgroup_height_cap(m: _re.Match) -> str:
             indent = m.group(1)
             var = m.group(2)
             arrange_call = m.group(3)
             line = f"{indent}{var}{arrange_call}"
             if "set_height" not in arrange_call and "set(height" not in arrange_call:
-                line += f"\n{indent}if {var}.height > 5.5: {var}.set(height=5.5)"
+                line += f"\n{indent}if {var}.height > 4.8: {var}.set(height=4.8)"
             return line
 
         source = _re.sub(
@@ -460,6 +460,90 @@ class ManimRenderer:
             _inject_vgroup_height_cap,
             source,
             flags=_re.MULTILINE,
+        )
+
+        # Ensure down-stacked groups have enough vertical breathing room.
+        def _raise_arrange_down_buff(m: _re.Match) -> str:
+            val = float(m.group(1))
+            val = max(val, 0.6)
+            return f"arrange(DOWN, buff={val:.2f})"
+
+        source = _re.sub(
+            r'arrange\(\s*DOWN\s*,\s*buff\s*=\s*([0-9]*\.?[0-9]+)\s*\)',
+            _raise_arrange_down_buff,
+            source,
+        )
+        source = _re.sub(
+            r'arrange\(\s*DOWN\s*\)',
+            'arrange(DOWN, buff=0.60)',
+            source,
+        )
+
+        # Keep next_to spacing above a minimum to avoid text collisions.
+        def _raise_next_to_buff(m: _re.Match) -> str:
+            before = m.group(1)
+            val = float(m.group(2))
+            val = max(val, 0.35)
+            return f"{before}buff={val:.2f}"
+
+        source = _re.sub(
+            r'(\.next_to\([^)]*?,\s*[^,)]*?,\s*)buff\s*=\s*([0-9]*\.?[0-9]+)',
+            _raise_next_to_buff,
+            source,
+        )
+
+        # Graph caption safety: if next_to(..., DOWN) is used, enforce a larger
+        # buffer so labels don't sit on top of axes/ticks.
+        def _raise_next_to_down_buff(m: _re.Match) -> str:
+            target = m.group(1)
+            raw_buff = m.group(2)
+            buff = float(raw_buff) if raw_buff is not None else 0.0
+            buff = max(buff, 0.65)
+            return f".next_to({target}, DOWN, buff={buff:.2f})"
+
+        source = _re.sub(
+            r'\.next_to\(\s*([^,\)]+?)\s*,\s*DOWN\s*(?:,\s*buff\s*=\s*([0-9]*\.?[0-9]+))?\s*\)',
+            _raise_next_to_down_buff,
+            source,
+        )
+
+        # Avoid placing labels/captions too low where they can overlap graph axes.
+        def _clamp_deep_down_move(m: _re.Match) -> str:
+            val = float(m.group(1))
+            if val > 2.3:
+                val = 2.3
+            return f"move_to(DOWN * {val:.2f})"
+
+        source = _re.sub(
+            r'move_to\(\s*DOWN\s*\*\s*([0-9]*\.?[0-9]+)\s*\)',
+            _clamp_deep_down_move,
+            source,
+        )
+
+        # Clamp all DOWN vector magnitudes so large shifts can't drop captions
+        # into graph axes or below frame bounds.
+        def _clamp_down_vector(m: _re.Match) -> str:
+            val = float(m.group(1))
+            if val > 2.3:
+                val = 2.3
+            return f"DOWN * {val:.2f}"
+
+        source = _re.sub(
+            r'DOWN\s*\*\s*([0-9]*\.?[0-9]+)',
+            _clamp_down_vector,
+            source,
+        )
+
+        def _raise_down_edge_buff(m: _re.Match) -> str:
+            raw = m.group(1)
+            val = float(raw) if raw is not None else 0.0
+            val = max(val, 0.6)
+            return f".to_edge(DOWN, buff={val:.2f})"
+
+        source = _re.sub(
+            r'\.to_edge\(\s*DOWN\s*(?:,\s*buff\s*=\s*([0-9]*\.?[0-9]+))?\s*\)',
+            _raise_down_edge_buff,
+            source,
         )
 
         # Inject Axes x_length/y_length if missing

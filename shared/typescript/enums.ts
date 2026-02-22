@@ -2,7 +2,7 @@ export enum Character {
   LEBRON = "lebron",
   GOKU = "goku",
   PETER = "peter",
-  ALYSA = "alysa",
+  TAYLOR = "taylor",
 }
 
 export enum Difficulty {
