@@ -1,7 +1,7 @@
 """Renders Manim scene files into MP4 clips.
 
-Uses ManimGL (3Blue1Brown's fork) as the primary engine.  A CE→GL
-compatibility patch auto-corrects common ManimCE patterns before render.
+Uses ManimCE (Community Edition) as the primary engine.  A GL→CE
+compatibility patch auto-corrects common ManimGL patterns before render.
 """
 
 import logging
@@ -22,6 +22,8 @@ class ManimRenderer:
 
     def __init__(self, timeout: int = _RENDER_TIMEOUT_SECONDS):
         self._timeout = timeout
+        self._fps = self._env_int("MANIM_FPS", 12, min_value=8, max_value=24)
+        self._ensure_texlive_on_path()
         self._engine = self._detect_engine()
         self._check_dependencies()
         self._texmfcnf, self._texmfdist = self._find_tex_paths()
@@ -34,21 +36,47 @@ class ManimRenderer:
             logger.info("[render] TEXMFDIST: %s", self._texmfdist)
             os.environ["TEXMFDIST"] = self._texmfdist
 
-    def _detect_engine(self) -> str:
-        """Detect which Manim engine is available (prefer ManimGL)."""
-        manimgl_path = shutil.which("manimgl")
-        manim_path = shutil.which("manim")
+    @staticmethod
+    def _env_int(name: str, default: int, min_value: int = 1, max_value: int = 10_000) -> int:
+        try:
+            value = int(os.getenv(name, str(default)))
+            return max(min_value, min(max_value, value))
+        except Exception:
+            return default
 
-        if manimgl_path:
-            logger.info("[render] Detected ManimGL: %s", manimgl_path)
-            return "gl"
-        elif manim_path:
+    @staticmethod
+    def _ensure_texlive_on_path():
+        """Add TeX Live bin directory to PATH if not already present."""
+        tex_bin_dirs = [
+            "/usr/local/texlive/2025/bin/universal-darwin",
+            "/usr/local/texlive/2024/bin/universal-darwin",
+            "/usr/local/texlive/2025/bin/x86_64-linux",
+            "/usr/local/texlive/2024/bin/x86_64-linux",
+            "/Library/TeX/texbin",
+        ]
+        current_path = os.environ.get("PATH", "")
+        for d in tex_bin_dirs:
+            if Path(d).is_dir() and d not in current_path:
+                os.environ["PATH"] = d + ":" + current_path
+                current_path = os.environ["PATH"]
+                logger.info("[render] Added TeX Live to PATH: %s", d)
+                break
+
+    def _detect_engine(self) -> str:
+        """Detect which Manim engine is available (prefer ManimCE)."""
+        manim_path = shutil.which("manim")
+        manimgl_path = shutil.which("manimgl")
+
+        if manim_path:
             logger.info("[render] Detected ManimCE: %s", manim_path)
             return "ce"
+        elif manimgl_path:
+            logger.info("[render] Detected ManimGL: %s", manimgl_path)
+            return "gl"
         else:
             raise RuntimeError(
-                "Neither 'manimgl' nor 'manim' (Community Edition) found on PATH. "
-                "Install: pip install manimgl  (recommended) OR  pip install manim"
+                "Neither 'manim' (Community Edition) nor 'manimgl' found on PATH. "
+                "Install: pip install manim  (recommended) OR  pip install manimgl"
             )
 
     def _check_dependencies(self) -> None:
@@ -76,6 +104,7 @@ class ManimRenderer:
         logger.info("[render] │  Engine: %s", self._engine)
         logger.info("[render] │  Output dir: %s", output_dir)
         logger.info("[render] │  Timeout: %ds", self._timeout)
+        logger.info("[render] │  FPS: %d", self._fps)
 
         if not scene_py.exists():
             logger.error("[render] │  Scene file does not exist!")
@@ -85,11 +114,11 @@ class ManimRenderer:
         logger.info("[render] │  Source: %d chars, %d lines", len(source), source.count("\n") + 1)
         logger.info("[render] │  Full source:\n%s", source)
 
-        # When running under ManimGL, rewrite ManimCE-specific code
-        if self._engine == "gl":
-            source = self._patch_ce_to_gl(source)
+        # When running under ManimCE, rewrite ManimGL-specific code
+        if self._engine == "ce":
+            source = self._patch_gl_to_ce(source)
             scene_py.write_text(source, encoding="utf-8")
-            logger.info("[render] │  Patched source for ManimGL compatibility")
+            logger.info("[render] │  Patched source for ManimCE compatibility")
 
         if self._engine == "ce":
             cmd = self._build_ce_command(scene_py, class_name, output_dir)
@@ -104,8 +133,6 @@ class ManimRenderer:
             env["TEXMFCNF"] = self._texmfcnf
         if self._texmfdist:
             env["TEXMFDIST"] = self._texmfdist
-        if self._engine == "gl":
-            env["DISPLAY"] = ""
         logger.info("[render] │  TEXMFCNF=%s TEXMFDIST=%s", self._texmfcnf, self._texmfdist)
 
         t0 = time.perf_counter()
@@ -162,14 +189,15 @@ class ManimRenderer:
             "render",
             str(scene_py),
             class_name,
-            "-qm",
+            "-ql",
+            "--fps", str(self._fps),
             "--format=mp4",
             f"--media_dir={output_dir}",
         ])
         return cmd
 
     def _build_gl_command(self, scene_py: Path, class_name: str, output_dir: Path) -> list[str]:
-        """Build command for ManimGL."""
+        """Build command for ManimGL (fallback)."""
         manimgl_path = shutil.which("manimgl")
         cmd = []
         if platform.system() == "Linux" and shutil.which("xvfb-run"):
@@ -205,9 +233,15 @@ class ManimRenderer:
                 capture_output=True, text=True, timeout=10,
             )
             if result.returncode == 0 and result.stdout.strip():
-                cnf_dir = Path(result.stdout.strip()).parent
+                cnf_path = Path(result.stdout.strip())
+                cnf_dir = cnf_path.parent
                 texmfcnf = texmfcnf or (str(cnf_dir) + ":")
-                texmfdist = texmfdist or str(cnf_dir.parent)
+                # Look for texmf-dist alongside or under cnf_dir
+                texmf_dist_candidate = cnf_dir / "texmf-dist"
+                if texmf_dist_candidate.is_dir():
+                    texmfdist = texmfdist or str(texmf_dist_candidate)
+                else:
+                    texmfdist = texmfdist or str(cnf_dir.parent)
                 return texmfcnf, texmfdist
         except Exception:
             pass
@@ -215,6 +249,13 @@ class ManimRenderer:
             if (candidate / "texmf.cnf").exists():
                 texmfcnf = texmfcnf or (str(candidate) + ":")
                 texmfdist = texmfdist or str(candidate.parent)
+                return texmfcnf, texmfdist
+        # Check /usr/local/texlive (MacTeX / manual TeX Live installs)
+        for year in ("2025", "2024", "2023"):
+            web2c = Path(f"/usr/local/texlive/{year}/texmf-dist/web2c")
+            if (web2c / "texmf.cnf").exists():
+                texmfcnf = texmfcnf or (str(web2c) + ":")
+                texmfdist = texmfdist or str(web2c.parent)
                 return texmfcnf, texmfdist
         return texmfcnf, texmfdist
 
@@ -248,7 +289,7 @@ class ManimRenderer:
 
     @staticmethod
     def _extract_traceback(stderr: str) -> str:
-        """Extract the Python traceback from ManimGL stderr, ignoring progress bars."""
+        """Extract the Python traceback from Manim stderr, ignoring progress bars."""
         lines = stderr.split("\n")
         tb_start = -1
         for i, line in enumerate(lines):
@@ -259,82 +300,112 @@ class ManimRenderer:
         return stderr.strip()[-500:]
 
     @staticmethod
-    def _patch_ce_to_gl(source: str) -> str:
-        """Rewrite ManimCE-specific code to work with ManimGL.
+    def _patch_gl_to_ce(source: str) -> str:
+        """Rewrite ManimGL-specific code to work with ManimCE.
 
-        This is a safety net — the LLM prompt already targets ManimGL, but if
-        any CE patterns slip through, this patch fixes them before render.
+        This is a safety net — the LLM prompt already targets ManimCE, but if
+        any GL patterns slip through, this patch fixes them before render.
         """
         import re as _re
 
         # ── Imports ──────────────────────────────────────────────────────
-        source = source.replace("from manim import *", "from manimlib import *")
-        source = source.replace("from manim import ", "from manimlib import ")
+        source = source.replace("from manimlib import *", "from manim import *")
+        source = source.replace("from manimlib import ", "from manim import ")
 
         # Ensure numpy import (many scenes use np)
         if "import numpy" not in source:
             source = source.replace(
-                "from manimlib import *",
-                "from manimlib import *\nimport numpy as np",
+                "from manim import *",
+                "from manim import *\nimport numpy as np",
                 1,
             )
 
-        # ── Animation renames (CE → GL) ─────────────────────────────────
-        source = _re.sub(r'\bCreate\(', 'ShowCreation(', source)
-        source = _re.sub(r'\bCircumscribe\(', 'Indicate(', source)
-        source = _re.sub(r'\bUnwrite\(', 'Uncreate(', source)
-        source = _re.sub(r'\bWiggle\(', 'WiggleOutThenIn(', source)
+        # ── Nuclear MathTex/Tex → Text monkey-patch ─────────────────────
+        # ManimCE internally creates MathTex in dozens of methods (axis
+        # labels, graph labels, number lines, etc.).  Patching module
+        # namespaces does NOT work because NumberLine.__init__ captures
+        # MathTex as a default-parameter value at class-definition time.
+        #
+        # The fix: patch MathTex.__new__ on the CLASS OBJECT itself.
+        # Any code that instantiates MathTex (even via the captured default)
+        # calls __new__, which now returns a Text object.  Since the
+        # returned object is not a MathTex instance, Python skips __init__
+        # entirely — no LaTeX compilation ever runs.
+        if "_tex_shim_new" not in source:
+            _shim = (
+                '\n# ── MathTex/Tex → Text shim (LaTeX not available) ──\n'
+                'import re as _re_mp\n'
+                'import manim.mobject.text.tex_mobject as _texm\n'
+                'def _clean_tex(combined):\n'
+                '    combined = _re_mp.sub(r"\\\\frac\\{([^}]*)\\}\\{([^}]*)\\}", r"(\\1)/(\\2)", combined)\n'
+                '    combined = _re_mp.sub(r"\\\\sqrt\\{([^}]*)\\}", "\\u221a(\\\\1)", combined)\n'
+                '    for _cmd, _sym in [("cdot","\\u00b7"),("times","\\u00d7"),("pm","\\u00b1"),'
+                '("infty","\\u221e"),("pi","\\u03c0"),("sum","\\u03a3"),("int","\\u222b"),'
+                '("rightarrow","\\u2192"),("Rightarrow","\\u21d2"),("leq","\\u2264"),'
+                '("geq","\\u2265"),("neq","\\u2260"),("approx","\\u2248"),'
+                '("alpha","\\u03b1"),("beta","\\u03b2"),("gamma","\\u03b3"),'
+                '("theta","\\u03b8"),("Delta","\\u0394"),("lambda","\\u03bb"),'
+                '("sigma","\\u03c3"),("omega","\\u03c9"),("mu","\\u03bc"),("epsilon","\\u03b5")]:\n'
+                '        combined = combined.replace("\\\\" + _cmd, _sym)\n'
+                '    combined = _re_mp.sub(r"\\\\[a-zA-Z]+\\{([^}]*)\\}", r"\\1", combined)\n'
+                '    combined = _re_mp.sub(r"\\\\[a-zA-Z]+", "", combined)\n'
+                '    combined = _re_mp.sub(r"[{}]", "", combined)\n'
+                '    for _s, _r in [("^2","\\u00b2"),("^3","\\u00b3"),("^n","\\u207f"),'
+                '("^{-1}","\\u207b\\u00b9"),("^0","\\u2070"),("^4","\\u2074")]:\n'
+                '        combined = combined.replace(_s, _r)\n'
+                '    for _s, _r in [("_0","\\u2080"),("_1","\\u2081"),("_2","\\u2082"),'
+                '("_3","\\u2083"),("_n","\\u2099"),("_i","\\u1d62"),("_x","\\u2093")]:\n'
+                '        combined = combined.replace(_s, _r)\n'
+                '    combined = _re_mp.sub(r"\\s+", " ", combined).strip() or "\\u2026"\n'
+                '    return combined\n'
+                '\n'
+                'def _tex_shim_new(cls, *args, **kwargs):\n'
+                '    """Return a Text object instead of compiling LaTeX."""\n'
+                '    tex_strings = [a for a in args if isinstance(a, (str, int, float))]\n'
+                '    if not tex_strings:\n'
+                '        tex_strings = ["\\u2026"]\n'
+                '    combined = _clean_tex(" ".join(str(s) for s in tex_strings))\n'
+                '    safe_kw = {k: v for k, v in kwargs.items()\n'
+                '               if k in ("color","font_size","weight","slant")}\n'
+                '    safe_kw.setdefault("font_size", 36)\n'
+                '    return Text(combined, **safe_kw)\n'
+                '\n'
+                '# Patch the CLASS OBJECTS so even default-parameter references work\n'
+                '_texm.MathTex.__new__ = staticmethod(_tex_shim_new)\n'
+                'if hasattr(_texm, "SingleStringMathTex"):\n'
+                '    _texm.SingleStringMathTex.__new__ = staticmethod(_tex_shim_new)\n'
+                '# Also override names in local scope for any direct calls\n'
+                'MathTex = _tex_shim_new\n'
+                'Tex = _tex_shim_new\n'
+                '# ── end shim ──\n'
+            )
+            # Insert after the last import line
+            import_end = 0
+            for i, line in enumerate(source.split('\n')):
+                if line.startswith('import ') or line.startswith('from '):
+                    import_end = i
+            lines = source.split('\n')
+            lines.insert(import_end + 1, _shim)
+            source = '\n'.join(lines)
 
-        # ── MathTex → Tex ────────────────────────────────────────────────
-        source = _re.sub(r'\bMathTex\(', 'Tex(', source)
+        # ── Animation renames (GL → CE) ─────────────────────────────────
+        source = _re.sub(r'\bShowCreation\(', 'Create(', source)
+        source = _re.sub(r'\bUncreate\(', 'Unwrite(', source)
+        source = _re.sub(r'\bWiggleOutThenIn\(', 'Wiggle(', source)
 
-        # ── axes.plot() → axes.get_graph() ───────────────────────────────
-        source = _re.sub(r'\.plot\(', '.get_graph(', source)
+        # ── axes.get_graph() → axes.plot() ──────────────────────────────
+        source = _re.sub(r'\.get_graph\(', '.plot(', source)
 
-        # ── Strip x_length / y_length from Axes() ───────────────────────
-        # ManimGL's Axes doesn't accept these; it uses x_range/y_range only.
-        source = _re.sub(r',\s*x_length\s*=\s*[\d.]+', '', source)
-        source = _re.sub(r',\s*y_length\s*=\s*[\d.]+', '', source)
-        source = _re.sub(r'x_length\s*=\s*[\d.]+\s*,\s*', '', source)
-        source = _re.sub(r'y_length\s*=\s*[\d.]+\s*,\s*', '', source)
-
-        # ── Strip tips=False from Axes() (not supported in ManimGL) ─────
-        source = _re.sub(r',\s*tips\s*=\s*(?:True|False)', '', source)
-        source = _re.sub(r'tips\s*=\s*(?:True|False)\s*,\s*', '', source)
-
-        # ── Fix Tex() constructor kwargs ─────────────────────────────────
-        # ManimGL's Tex() doesn't accept color= or font_size=.
-        # Convert: Tex(r"...", color=BLUE) → Tex(r"...").set_color(BLUE)
-        # Convert: Tex(r"...", font_size=N) → Tex(r"...").scale(N/36)
-        def _fix_tex_kwargs(m: _re.Match) -> str:
-            prefix = m.group(1)  # Tex( or TexText(
-            content = m.group(2)  # everything inside parens
-
-            color_match = _re.search(r',\s*color\s*=\s*([A-Z_]+)', content)
-            fontsize_match = _re.search(r',\s*font_size\s*=\s*(\d+)', content)
-
-            # Remove the kwargs from constructor
-            cleaned = _re.sub(r',\s*color\s*=\s*[A-Z_]+', '', content)
-            cleaned = _re.sub(r',\s*font_size\s*=\s*\d+', '', cleaned)
-
-            result = f"{prefix}{cleaned})"
-            if color_match:
-                result += f".set_color({color_match.group(1)})"
-            if fontsize_match:
-                fs = max(int(fontsize_match.group(1)), 24)
-                scale = round(fs / 36, 2)
-                if scale != 1.0:
-                    result += f".scale({scale})"
-            return result
-
+        # ── Remove ManimGL-specific self.camera.background_color lines ──
+        # ManimCE handles background via config or Scene defaults
         source = _re.sub(
-            r'((?:Tex|TexText)\s*\()([^)]*(?:color\s*=|font_size\s*=)[^)]*)\)',
-            _fix_tex_kwargs,
+            r'^[ \t]*self\.camera\.background_color\s*=\s*\w+\s*\n?',
+            '',
             source,
+            flags=_re.MULTILINE,
         )
 
         # ── Enforce minimum font_size ────────────────────────────────────
-        # Replace any font_size below 24 with 24
         def _floor_fontsize(m: _re.Match) -> str:
             fs = int(m.group(1))
             return f"font_size={max(fs, 24)}"
@@ -348,81 +419,8 @@ class ManimRenderer:
 
         source = _re.sub(r'\.scale\(\s*(0\.\d+)\s*\)', _floor_scale, source)
 
-        # ── Strip axis_config={...} from Axes() ─────────────────────────
-        # ManimGL Axes doesn't accept axis_config dicts
-        # Handle nested dicts with a non-greedy match up to the matching }
-        source = _re.sub(
-            r',\s*axis_config\s*=\s*\{[^}]*\}', '', source
-        )
-        source = _re.sub(
-            r'axis_config\s*=\s*\{[^}]*\}\s*,?\s*', '', source
-        )
-
-        # ── Strip include_numbers / include_tip from Axes() ─────────────
-        source = _re.sub(r',\s*include_numbers\s*=\s*(?:True|False)', '', source)
-        source = _re.sub(r'include_numbers\s*=\s*(?:True|False)\s*,?\s*', '', source)
-        source = _re.sub(r',\s*include_tip\s*=\s*(?:True|False)', '', source)
-        source = _re.sub(r'include_tip\s*=\s*(?:True|False)\s*,?\s*', '', source)
-
-        # ── Replace .get_axis_labels() with VGroup() (preserve indentation) ─
-        source = _re.sub(
-            r'^([ \t]*\w+\s*=\s*)\w+\.get_axis_labels\([^)]*\)',
-            r'\1VGroup()',
-            source,
-            flags=_re.MULTILINE,
-        )
-
-        # ── Strip .add_coordinates() calls (replace line with pass) ──────
-        source = _re.sub(
-            r'^([ \t]*)\w+\.add_coordinates\([^)]*\)',
-            r'\1pass  # add_coordinates removed',
-            source,
-            flags=_re.MULTILINE,
-        )
-
-        # ── Replace axes.get_area() with VMobject() (preserve indentation) ─
-        source = _re.sub(
-            r'^([ \t]*\w+\s*=\s*)\w+\.get_area\([^)]*\)',
-            r'\1VMobject()',
-            source,
-            flags=_re.MULTILINE,
-        )
-
-        # ── Enforce Axes scaling so graphs fit within the frame ──────────
-        # Find `var = Axes(...)` lines and inject .set_height/.set_width
-        # if the code doesn't already scale them.
-        def _inject_axes_scaling(m: _re.Match) -> str:
-            indent = m.group(1)
-            var_name = m.group(2)
-            axes_call = m.group(3)
-            rest_of_line = m.group(4) if m.group(4) else ""
-            line = f"{indent}{var_name} = {axes_call}{rest_of_line}"
-            if "set_height" not in rest_of_line and "set_width" not in rest_of_line:
-                line += f"\n{indent}{var_name}.set_height(5.0).set_width(10.0)"
-            return line
-
-        source = _re.sub(
-            r'^([ \t]*)(\w+)\s*=\s*(Axes\([^)]*\))(.*?)$',
-            _inject_axes_scaling,
-            source,
-            flags=_re.MULTILINE,
-        )
-
         # ── Remove plugin imports (from manim_* import ...) ──────────────
         source = _re.sub(r'^from\s+manim_\w+\s+import\s+.*$', '# removed plugin import', source, flags=_re.MULTILINE)
-
-        # ── Remove always_redraw() lines entirely ─────────────────────────
-        # always_redraw is not in ManimGL; comment out the entire line
-        source = _re.sub(
-            r'^([ \t]*)(\w+\s*=\s*always_redraw\s*\(.*\))',
-            r'\1pass  # removed: \2',
-            source,
-            flags=_re.MULTILINE,
-        )
-
-        # ── Strip num_decimal_places from DecimalNumber ──────────────────
-        source = _re.sub(r',\s*num_decimal_places\s*=\s*\d+', '', source)
-        source = _re.sub(r'num_decimal_places\s*=\s*\d+\s*,\s*', '', source)
 
         # ── Guard unguarded lambda division: 1/x → safe version ──────────
         def _guard_division(m: _re.Match) -> str:
@@ -436,14 +434,273 @@ class ManimRenderer:
             source,
         )
 
-        # ── Inject self.camera.background_color = BLACK if missing ────────
-        if 'def construct(self)' in source and 'background_color' not in source:
-            source = _re.sub(
-                r'(def construct\(self\):\s*\n)',
-                r'\1        self.camera.background_color = BLACK\n',
-                source,
-                count=1,
-            )
+        # ── LAYOUT ENFORCEMENT ───────────────────────────────────────────
+
+        # Cap Text/MathTex width after assignment:
+        #   var = Text(...)  →  var = Text(...)\n  var.set(width=min(var.width, 8.5))
+        def _inject_text_width_cap(m: _re.Match) -> str:
+            indent = m.group(1)
+            var = m.group(2)
+            rest = m.group(3)
+            line = f"{indent}{var} = {rest}"
+            # Don't double-inject if already capped
+            if "set_width" not in rest and "set(width" not in rest:
+                line += f"\n{indent}{var}.set(width=min({var}.width, 8.5))"
+            return line
+
+        source = _re.sub(
+            r'^([ \t]+)(\w+)\s*=\s*((?:Text|MathTex)\s*\([^)]*\)(?:\.[a-z_]+\([^)]*\))*)\s*$',
+            _inject_text_width_cap,
+            source,
+            flags=_re.MULTILINE,
+        )
+
+        # Cap VGroup height after .arrange():
+        #   group.arrange(DOWN, ...)  →  group.arrange(DOWN, ...)\n  group.set(height=min(group.height, 4.8))
+        def _inject_vgroup_height_cap(m: _re.Match) -> str:
+            indent = m.group(1)
+            var = m.group(2)
+            arrange_call = m.group(3)
+            line = f"{indent}{var}{arrange_call}"
+            if "set_height" not in arrange_call and "set(height" not in arrange_call:
+                line += f"\n{indent}if {var}.height > 4.8: {var}.set(height=4.8)"
+            return line
+
+        source = _re.sub(
+            r'^([ \t]+)(\w+)(\.arrange\([^)]*\)(?:\.[a-z_]+\([^)]*\))*)\s*$',
+            _inject_vgroup_height_cap,
+            source,
+            flags=_re.MULTILINE,
+        )
+
+        # Ensure down-stacked groups have enough vertical breathing room.
+        def _raise_arrange_down_buff(m: _re.Match) -> str:
+            val = float(m.group(1))
+            val = max(val, 0.7)
+            return f"arrange(DOWN, buff={val:.2f})"
+
+        source = _re.sub(
+            r'arrange\(\s*DOWN\s*,\s*buff\s*=\s*([0-9]*\.?[0-9]+)\s*\)',
+            _raise_arrange_down_buff,
+            source,
+        )
+        source = _re.sub(
+            r'arrange\(\s*DOWN\s*\)',
+            'arrange(DOWN, buff=0.70)',
+            source,
+        )
+
+        # Keep next_to spacing above a minimum to avoid text collisions.
+        def _raise_next_to_buff(m: _re.Match) -> str:
+            before = m.group(1)
+            val = float(m.group(2))
+            val = max(val, 0.45)
+            return f"{before}buff={val:.2f}"
+
+        source = _re.sub(
+            r'(\.next_to\([^)]*?,\s*[^,)]*?,\s*)buff\s*=\s*([0-9]*\.?[0-9]+)',
+            _raise_next_to_buff,
+            source,
+        )
+
+        # Graph caption safety: if next_to(..., DOWN) is used, enforce a larger
+        # buffer so labels don't sit on top of axes/ticks.
+        def _raise_next_to_down_buff(m: _re.Match) -> str:
+            target = m.group(1)
+            raw_buff = m.group(2)
+            buff = float(raw_buff) if raw_buff is not None else 0.0
+            buff = max(buff, 0.85)
+            return f".next_to({target}, DOWN, buff={buff:.2f})"
+
+        source = _re.sub(
+            r'\.next_to\(\s*([^,\)]+?)\s*,\s*DOWN\s*(?:,\s*buff\s*=\s*([0-9]*\.?[0-9]+))?\s*\)',
+            _raise_next_to_down_buff,
+            source,
+        )
+
+        # If text is positioned DOWN relative to axes/graph anchors, flip it UP.
+        # This prevents narration labels from landing on axis/tick regions.
+        def _avoid_axes_down_overlap(m: _re.Match) -> str:
+            target = m.group(1).strip()
+            raw_buff = m.group(2)
+            buff = float(raw_buff) if raw_buff is not None else 0.0
+            buff = max(buff, 0.85)
+            if "axes" in target or "c2p(" in target:
+                return f".next_to({target}, UP, buff={buff:.2f})"
+            return f".next_to({target}, DOWN, buff={buff:.2f})"
+
+        source = _re.sub(
+            r'\.next_to\(\s*(.+?)\s*,\s*DOWN\s*(?:,\s*buff\s*=\s*([0-9]*\.?[0-9]+))?\s*\)',
+            _avoid_axes_down_overlap,
+            source,
+        )
+
+        # Avoid placing labels/captions too low where they can overlap graph axes.
+        def _clamp_deep_down_move(m: _re.Match) -> str:
+            val = float(m.group(1))
+            if val > 1.9:
+                val = 1.9
+            return f"move_to(DOWN * {val:.2f})"
+
+        source = _re.sub(
+            r'move_to\(\s*DOWN\s*\*\s*([0-9]*\.?[0-9]+)\s*\)',
+            _clamp_deep_down_move,
+            source,
+        )
+
+        # Clamp all DOWN vector magnitudes so large shifts can't drop captions
+        # into graph axes or below frame bounds.
+        def _clamp_down_vector(m: _re.Match) -> str:
+            val = float(m.group(1))
+            if val > 1.9:
+                val = 1.9
+            return f"DOWN * {val:.2f}"
+
+        source = _re.sub(
+            r'DOWN\s*\*\s*([0-9]*\.?[0-9]+)',
+            _clamp_down_vector,
+            source,
+        )
+
+        def _raise_down_edge_buff(m: _re.Match) -> str:
+            raw = m.group(1)
+            val = float(raw) if raw is not None else 0.0
+            val = max(val, 1.0)
+            return f".to_edge(DOWN, buff={val:.2f})"
+
+        source = _re.sub(
+            r'\.to_edge\(\s*DOWN\s*(?:,\s*buff\s*=\s*([0-9]*\.?[0-9]+))?\s*\)',
+            _raise_down_edge_buff,
+            source,
+        )
+
+        # Reserve upper-left for character sprite overlay.
+        def _shift_ul_corner(m: _re.Match) -> str:
+            raw = m.group(1)
+            buff = float(raw) if raw is not None else 0.0
+            buff = max(buff, 0.9)
+            return f".to_corner(UL, buff={buff:.2f}).shift(RIGHT * 1.2 + DOWN * 0.5)"
+
+        source = _re.sub(
+            r'\.to_corner\(\s*UL\s*(?:,\s*buff\s*=\s*([0-9]*\.?[0-9]+))?\s*\)',
+            _shift_ul_corner,
+            source,
+        )
+
+        # Keep hard-left placements away from the sprite region.
+        def _raise_left_edge_buff(m: _re.Match) -> str:
+            raw = m.group(1)
+            buff = float(raw) if raw is not None else 0.0
+            buff = max(buff, 1.0)
+            return f".to_edge(LEFT, buff={buff:.2f})"
+
+        source = _re.sub(
+            r'\.to_edge\(\s*LEFT\s*(?:,\s*buff\s*=\s*([0-9]*\.?[0-9]+))?\s*\)',
+            _raise_left_edge_buff,
+            source,
+        )
+
+        # Lift graph axes slightly so lower captions have breathing room.
+        def _lift_axes_from_bottom(m: _re.Match) -> str:
+            var = m.group(1)
+            val = float(m.group(2))
+            val = min(val, 0.15)
+            return f"{var}.move_to(DOWN * {val:.2f})"
+
+        source = _re.sub(
+            r'((?:axes|ax)\w*)\.move_to\(\s*DOWN\s*\*\s*([0-9]*\.?[0-9]+)\s*\)',
+            _lift_axes_from_bottom,
+            source,
+        )
+
+        # Inject Axes x_length/y_length if missing
+        def _inject_axes_sizing(m: _re.Match) -> str:
+            full = m.group(0)
+            if "x_length" not in full and "y_length" not in full:
+                # Insert before the closing paren
+                full = _re.sub(
+                    r'\)\s*$',
+                    ', x_length=10, y_length=5)',
+                    full,
+                )
+            return full
+
+        source = _re.sub(
+            r'Axes\([^)]*\)',
+            _inject_axes_sizing,
+            source,
+        )
+
+        # Replace .to_edge(UP) on title-like variables with .move_to(UP * 3.2)
+        source = _re.sub(
+            r'(title\w*)\.to_edge\(\s*UP\s*(?:,\s*buff\s*=\s*[\d.]+)?\s*\)',
+            r'\1.move_to(UP * 3.2)',
+            source,
+        )
+
+        # ── Convert axis label string args to Text() to avoid hidden MathTex ──
+        # ManimCE's get_x_axis_label("x") internally creates MathTex("x")
+        # which requires LaTeX. Pass Text() objects instead.
+        def _axis_label_to_text(m: _re.Match) -> str:
+            method = m.group(1)
+            quote = m.group(2)
+            label_str = m.group(3)
+            return f'{method}(Text("{label_str}", font_size=28)'
+        source = _re.sub(
+            r'(\.get_[xy]_axis_label)\(\s*(["\'])([^"\']*)\2',
+            _axis_label_to_text,
+            source,
+        )
+        # get_axis_labels(x_label="x", y_label="f(x)") → keyword args
+        def _axis_labels_kwargs_to_text(m: _re.Match) -> str:
+            kw = m.group(1)
+            label_str = m.group(3)
+            return f'{kw}=Text("{label_str}", font_size=28)'
+        source = _re.sub(
+            r'([xy]_label)\s*=\s*(["\'])([^"\']*)\2',
+            _axis_labels_kwargs_to_text,
+            source,
+        )
+        # get_axis_labels("x", "f(x)") → positional string args
+        def _get_axis_labels_positional(m: _re.Match) -> str:
+            q1 = m.group(1)
+            s1 = m.group(2)
+            q2 = m.group(3)
+            s2 = m.group(4)
+            return f'get_axis_labels(Text("{s1}", font_size=28), Text("{s2}", font_size=28))'
+        source = _re.sub(
+            r'get_axis_labels\(\s*(["\'])([^"\']*)\1\s*,\s*(["\'])([^"\']*)\3\s*\)',
+            _get_axis_labels_positional,
+            source,
+        )
+
+        # ── get_graph_label: string label arg → Text() ──
+        # get_graph_label(graph, "f(x)") — positional 2nd arg
+        source = _re.sub(
+            r'(\.get_graph_label\(\s*\w[\w.]*\s*,\s*)(["\'])([^"\']*)\2',
+            r'\1Text("\3", font_size=28)',
+            source,
+        )
+        # get_graph_label(..., label="f(x)") — keyword arg
+        source = _re.sub(
+            r'(\.get_graph_label\([^)]*?)label\s*=\s*(["\'])([^"\']*)\2',
+            r'\1label=Text("\3", font_size=28)',
+            source,
+        )
+
+        # ── get_T_label: string label arg → Text() ──
+        # get_T_label(x_val, graph, "label") — positional 3rd arg
+        source = _re.sub(
+            r'(\.get_T_label\(\s*[\w.]+\s*,\s*\w[\w.]*\s*,\s*)(["\'])([^"\']*)\2',
+            r'\1Text("\3", font_size=28)',
+            source,
+        )
+        # get_T_label(..., label="label") — keyword arg
+        source = _re.sub(
+            r'(\.get_T_label\([^)]*?)label\s*=\s*(["\'])([^"\']*)\2',
+            r'\1label=Text("\3", font_size=28)',
+            source,
+        )
 
         # ── Inject final FadeOut if construct() doesn't end with one ─────
         if 'def construct(self)' in source and 'FadeOut(m) for m in self.mobjects' not in source:

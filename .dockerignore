@@ -1,0 +1,44 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+.venv
+venv
+pipeline/venv
+backend/venv
+
+# Node
+frontend/node_modules
+frontend/.next
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env (secrets injected via Railway env vars)
+.env
+.env.local
+.env.*.local
+
+# Storage (mounted volume, not baked into image)
+storage/
+pipeline/storage/
+
+# Tests
+pipeline/tests
+backend/tests
+
+# Docs
+*.md
+LICENSE

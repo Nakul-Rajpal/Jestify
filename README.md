@@ -9,7 +9,7 @@ Upload your homework, notes, or lecture slides — pick a character like SpongeB
 ```
 frontend/     →  Next.js (TypeScript, Tailwind) — ChatGPT-style UI
 backend/      →  FastAPI (Python) — Document processing, LLM script generation, job orchestration
-pipeline/     →  Python — ManimGL rendering, voice synthesis, video assembly
+pipeline/     →  Python — ManimCE rendering, voice synthesis, video assembly
 shared/       →  Shared contracts (Python + TypeScript types)
 ```
 
@@ -89,7 +89,7 @@ docker compose up
 3. **Submit** — the system:
    - Extracts text from documents
    - Uses Claude to generate a structured script in the character's voice
-   - Renders ManimGL animations for each scene
+   - Renders ManimCE animations for each scene
    - Synthesizes character voice audio (Qwen3-TTS)
    - Composites character overlay onto animations
    - Assembles the final video
@@ -104,7 +104,7 @@ docker compose up
 | Job Queue | Celery + Redis |
 | Database | PostgreSQL |
 | LLM | Claude (Anthropic API) |
-| Animations | ManimGL (3Blue1Brown) |
+| Animations | ManimCE (Community Edition) |
 | Voice | Qwen3-TTS |
 | Video | FFmpeg |
 

@@ -42,8 +42,8 @@ function getCharacterName(character: Character | null): string {
       return "Goku";
     case Character.PETER:
       return "Peter Griffin";
-    case Character.ROGAN:
-      return "Joe Rogan";
+    case Character.TAYLOR:
+      return "Taylor Swift";
     default:
       return "your character";
   }

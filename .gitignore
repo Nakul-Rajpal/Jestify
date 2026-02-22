@@ -57,7 +57,7 @@ htmlcov/
 .coverage.*
 coverage.xml
 
-# ManimGL output
+# Manim output
 media/
 videos/
 .claude/

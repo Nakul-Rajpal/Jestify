@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shared.contracts.api_types import JobStatusResponse
 from shared.contracts.enums import JobStatus
 
-from ..config import settings
+from ..config import PROJECT_ROOT, settings
 from ..database import get_db
 from ..services.job_manager import JobManager
 
@@ -68,20 +68,20 @@ async def get_job_status(
 
     # Safety net: if worker wrote output file but DB/Redis missed updates,
     # surface completion so frontend never hangs on "pending".
-    if job.status != JobStatus.COMPLETED.value:
-        inferred_video = Path(settings.STORAGE_PATH) / "videos" / str(job_uuid) / "final.mp4"
-        if inferred_video.exists():
-            job = await job_manager.update_job_status(
-                job_uuid,
-                status=JobStatus.COMPLETED.value,
-                progress_percent=100,
-                current_step="Video generation complete.",
-                video_path=str(inferred_video),
-                error_message=None,
-            )
-            await db.commit()
+    resolved_video_path = _resolve_video_path(job, job_id)
+    if job.status != JobStatus.COMPLETED.value and resolved_video_path is not None:
+        job = await job_manager.update_job_status(
+            job_uuid,
+            status=JobStatus.COMPLETED.value,
+            progress_percent=100,
+            current_step="Video generation complete.",
+            video_path=str(resolved_video_path),
+            error_message=None,
+        )
+        await db.commit()
+        resolved_video_path = _resolve_video_path(job, job_id)
 
-    video_url = f"/api/jobs/{job_id}/video" if job.video_path else None
+    video_url = f"/api/jobs/{job_id}/video" if resolved_video_path else None
     thumbnail_url = f"/api/jobs/{job_id}/thumbnail" if job.thumbnail_path else None
 
     return JobStatusResponse(
@@ -99,13 +99,25 @@ async def get_job_status(
 
 def _resolve_video_path(job, job_id: str) -> Path | None:
     """Find the video file on disk, checking DB path then fallback."""
+    def _candidate_paths(raw_path: str) -> list[Path]:
+        p = Path(raw_path)
+        candidates = [p]
+        if not p.is_absolute():
+            candidates.append((PROJECT_ROOT / p).resolve())
+            # Backward-compatibility for worker runs started from `pipeline/`.
+            candidates.append((PROJECT_ROOT / "pipeline" / p).resolve())
+        return candidates
+
     if job.video_path:
-        p = Path(job.video_path)
-        if p.exists() and p.stat().st_size > 0:
-            return p
+        for p in _candidate_paths(job.video_path):
+            if p.exists() and p.stat().st_size > 0:
+                return p
     fallback = Path(settings.STORAGE_PATH) / "videos" / job_id / "final.mp4"
     if fallback.exists() and fallback.stat().st_size > 0:
         return fallback
+    legacy_fallback = PROJECT_ROOT / "pipeline" / "storage" / "videos" / job_id / "final.mp4"
+    if legacy_fallback.exists() and legacy_fallback.stat().st_size > 0:
+        return legacy_fallback
     return None
 
 

@@ -50,6 +50,7 @@ CHARACTER_PERSONALITIES: dict[Character, CharacterPersonality] = {
             "where each challenge unlocks better technique, control, and strategy. He approaches "
             "new problems with curiosity and excitement, treating each lesson as a chance to level up."
         ),
+        fish_voice_id="1774abf25a3b4a2fb272e78c7382e4d2",
     ),
     Character.PETER: CharacterPersonality(
         id=Character.PETER,
@@ -65,20 +66,21 @@ CHARACTER_PERSONALITIES: dict[Character, CharacterPersonality] = {
             "concepts by relating them to ordinary routines, family chaos, and funny what-if scenarios. "
             "The style is comedic, but the educational goal is still clear and structured."
         ),
+        fish_voice_id="445c35f86b8547da870609b66e6b5d7d",
     ),
-    Character.ROGAN: CharacterPersonality(
-        id=Character.ROGAN,
-        display_name="Joe Rogan",
-        voice_style="conversational, curious, long-form podcast cadence",
-        analogy_domain="podcasts, debate, thought experiments, real-world examples",
-        catchphrases=["That's wild", "Think about it", "Here's the thing"],
-        tone="curious and exploratory, explains by questioning assumptions",
+    Character.TAYLOR: CharacterPersonality(
+        id=Character.TAYLOR,
+        display_name="Taylor Swift",
+        voice_style="clear, expressive, story-driven, confident",
+        analogy_domain="songwriting, eras, storytelling, creative structure",
+        catchphrases=["Let's break this down", "See the pattern", "Here's the key idea"],
+        tone="engaging and structured, teaching through stories and patterns",
         background=(
-            "Joe Rogan's style is exploratory and discussion-driven. He digs into topics by asking "
-            "follow-up questions, comparing viewpoints, and pressure-testing assumptions with concrete "
-            "examples. The cadence is conversational and reflective, like a long-form interview where "
-            "ideas are unpacked step by step. He often connects abstract concepts to practical situations "
-            "people can observe in daily life."
+            "Taylor Swift's teaching style is expressive, structured, and narrative. She explains "
+            "ideas by identifying themes, motifs, and the progression from simple concepts to full "
+            "mastery. Her delivery is clear and memorable, using story flow and recurring patterns "
+            "to make difficult material easier to understand."
         ),
+        fish_voice_id="2b5de5ebb7c14b72b516292b9b04d80d",
     ),
 }

@@ -44,11 +44,16 @@ class SceneBuilder:
         return class_name
 
     def _use_llm_code(self, scene: SceneInstruction) -> tuple[str, str]:
-        """Sanitize and validate LLM-generated ManimGL code."""
+        """Sanitize and validate LLM-generated ManimCE code."""
         source = scene.manim_code or ""
         logger.info("[scene_builder] │  LLM code: %d chars", len(source))
 
         source = self._sanitize_code(source)
+
+        # Always convert MathTex/Tex → Text to prevent LaTeX compilation errors.
+        # This runs BEFORE AST validation so the resulting code is valid Python.
+        source = self._replace_latex_with_text(source)
+        source = self._normalize_timing(source, scene.duration_hint_seconds)
 
         class_name = self._extract_class_name(source)
         if not class_name:
@@ -57,17 +62,17 @@ class SceneBuilder:
             source = self._wrap_in_scene_class(source, expected)
             class_name = expected
 
-        if "from manimlib import" not in source and "from manim import" not in source:
-            source = "from manimlib import *\nimport numpy as np\n\n" + source
-            logger.info("[scene_builder] │  Added missing 'from manimlib import *'")
+        if "from manim import" not in source and "from manimlib import" not in source:
+            source = "from manim import *\nimport numpy as np\n\n" + source
+            logger.info("[scene_builder] │  Added missing 'from manim import *'")
 
-        # Enforce minimum font_size of 24 on all Text/Tex objects
+        # Enforce minimum font_size of 24 on all Text/MathTex objects
         source = self._enforce_font_floor(source)
 
         errors = self._validate_ast(source)
         if errors:
             logger.warning("[scene_builder] │  AST validation issues: %s", errors)
-            logger.info("[scene_builder] │  Attempting auto-fix before fallback...")
+            logger.info("[scene_builder] │  Attempting auto-fix...")
             source = self._auto_fix_code(source)
             # Re-extract class name after patching (import line may have changed)
             patched_class = self._extract_class_name(source)
@@ -76,8 +81,11 @@ class SceneBuilder:
             errors = self._validate_ast(source)
             if errors:
                 logger.error("[scene_builder] │  Auto-fix did not resolve: %s", errors)
-                logger.info("[scene_builder] │  Falling back to template")
-                return self._build_fallback(scene)
+                # Raise so the orchestrator retries with LLM code repair
+                # instead of silently falling back to a static template.
+                raise ValueError(
+                    f"LLM-generated code has AST errors after auto-fix: {errors}"
+                )
             logger.info("[scene_builder] │  Auto-fix resolved all issues")
 
         return source, class_name
@@ -89,6 +97,46 @@ class SceneBuilder:
             fs = int(m.group(1))
             return f"font_size={max(fs, 24)}"
         return re.sub(r'font_size\s*=\s*(\d+)', _clamp, source)
+
+    @staticmethod
+    def _normalize_timing(source: str, target_seconds: float) -> str:
+        """Scale literal run_time/self.wait durations down to match target scene length."""
+        run_matches = list(re.finditer(r'run_time\s*=\s*(\d+(?:\.\d+)?)', source))
+        wait_matches = list(re.finditer(r'self\.wait\(\s*(\d+(?:\.\d+)?)\s*\)', source))
+        if not run_matches and not wait_matches:
+            return source
+
+        run_total = sum(float(m.group(1)) for m in run_matches)
+        wait_total = sum(float(m.group(1)) for m in wait_matches)
+        estimated_total = run_total + wait_total
+        target = max(6.0, float(target_seconds or 0))
+
+        if estimated_total <= 0 or estimated_total <= target * 1.15:
+            return source
+
+        scale = max(0.25, min(1.0, target / estimated_total))
+
+        def _fmt(value: float) -> str:
+            s = f"{value:.2f}"
+            return s.rstrip("0").rstrip(".")
+
+        def _scale_run(m: re.Match) -> str:
+            current = float(m.group(1))
+            scaled = max(0.3, min(1.5, current * scale))
+            return f"run_time={_fmt(scaled)}"
+
+        def _scale_wait(m: re.Match) -> str:
+            current = float(m.group(1))
+            scaled = max(0.15, min(1.0, current * scale))
+            return f"self.wait({_fmt(scaled)})"
+
+        source = re.sub(r'run_time\s*=\s*(\d+(?:\.\d+)?)', _scale_run, source)
+        source = re.sub(r'self\.wait\(\s*(\d+(?:\.\d+)?)\s*\)', _scale_wait, source)
+        logger.info(
+            "[scene_builder] │  Timing normalized: %.1fs -> target %.1fs (scale=%.2f)",
+            estimated_total, target, scale,
+        )
+        return source
 
     def _sanitize_code(self, source: str) -> str:
         """Clean up common LLM code generation issues."""
@@ -102,8 +150,8 @@ class SceneBuilder:
             source = source[:-3]
         source = source.strip()
 
-        # Keep whatever import the LLM used — renderer._patch_ce_to_gl()
-        # will normalise to manimlib when running under ManimGL.
+        # Keep whatever import the LLM used — renderer._patch_gl_to_ce()
+        # will normalise to manim when running under ManimCE.
 
         return source
 
@@ -193,10 +241,6 @@ class {class_name}(Scene):
 {indented_body}
 """
 
-    # Patterns known to crash ManimGL at render time
-    _BANNED_CALLS = {"get_area", "get_axis_labels", "add_coordinates", "always_redraw"}
-    _BANNED_AXES_KWARGS = {"x_length", "y_length", "tips", "axis_config", "include_numbers", "include_tip"}
-
     def _validate_ast(self, source: str) -> list[str]:
         """Parse source with AST and return list of error messages."""
         errors = []
@@ -228,25 +272,6 @@ class {class_name}(Scene):
                 if node.module.startswith("manim_"):
                     errors.append(f"Banned plugin import: from {node.module}")
 
-            # Detect banned method calls
-            if isinstance(node, ast.Call):
-                func = node.func
-                call_name = ""
-                if isinstance(func, ast.Attribute):
-                    call_name = func.attr
-                elif isinstance(func, ast.Name):
-                    call_name = func.id
-                if call_name in self._BANNED_CALLS:
-                    errors.append(f"Banned call: {call_name}()")
-                if call_name == "MathTex":
-                    errors.append("Banned call: MathTex() — use Tex()")
-
-                # Detect banned Axes kwargs
-                if call_name == "Axes":
-                    for kw in node.keywords:
-                        if kw.arg in self._BANNED_AXES_KWARGS:
-                            errors.append(f"Banned Axes kwarg: {kw.arg}")
-
         if not has_scene_class:
             errors.append("No Scene subclass found")
         if not has_construct:
@@ -255,12 +280,12 @@ class {class_name}(Scene):
 
     @staticmethod
     def _auto_fix_code(source: str) -> str:
-        """Apply the same transforms as renderer._patch_ce_to_gl() to fix issues early.
+        """Apply the same transforms as renderer._patch_gl_to_ce() to fix issues early.
 
         This gives us a chance to salvage LLM code before falling back to templates.
         """
         from pipeline.manim_renderer.renderer import ManimRenderer
-        return ManimRenderer._patch_ce_to_gl(source)
+        return ManimRenderer._patch_gl_to_ce(source)
 
     @staticmethod
     def _extract_key_phrases(narration: str, count: int = 3) -> list[str]:
@@ -287,8 +312,8 @@ class {class_name}(Scene):
             first_sentence = re.split(r'[.!?]', scene.narration_text)[0].strip()
             title = first_sentence[:72] if first_sentence else "Concept Visual"
         title_escaped = title.replace('"', '\\"').replace("'", "\\'")[:80]
-        duration = max(20, int(scene.duration_hint_seconds))
-        hold = max(4, duration - 14)
+        duration = max(8, int(scene.duration_hint_seconds or 10))
+        hold = max(0.8, duration - 8)
 
         phrases = self._extract_key_phrases(scene.narration_text)
         p1 = phrases[0].replace('"', '\\"')
@@ -309,21 +334,23 @@ class {class_name}(Scene):
         # Graph Layout: axes at grid MAIN_AREA
         axes = Axes(
             x_range=[-4, 4, 1], y_range=[-3, 10, 1],
+            x_length=10, y_length=5,
+            tips=True,
         )
         axes.move_to(DOWN * 0.3)
         x_lab = Text("{x_label_e}", font_size=28).next_to(axes.x_axis, RIGHT, buff=0.2)
         y_lab = Text("{y_label_e}", font_size=28).next_to(axes.y_axis, UP, buff=0.2)
-        self.play(ShowCreation(axes), Write(x_lab), Write(y_lab), run_time=2.5)
+        self.play(Create(axes), Write(x_lab), Write(y_lab), run_time=2.5)
         self.wait(1)
 
-        graph = axes.get_graph(lambda x: x**2, color=BLUE, x_range=[-3, 3])
-        graph2 = axes.get_graph(lambda x: 2*x, color=GREEN, x_range=[-3, 3])
+        graph = axes.plot(lambda x: x**2, color=BLUE, x_range=[-3, 3])
+        graph2 = axes.plot(lambda x: 2*x, color=GREEN, x_range=[-3, 3])
         lbl1 = Text("{p1[:40]}", font_size=26, color=BLUE).next_to(axes.c2p(2, 4), RIGHT, buff=0.2)
         lbl2 = Text("{p2[:40]}", font_size=26, color=GREEN).next_to(axes.c2p(2.5, 5), RIGHT, buff=0.2)
-        self.play(ShowCreation(graph), run_time=2.5)
+        self.play(Create(graph), run_time=2.5)
         self.play(Write(lbl1), run_time=1.5)
         self.play(graph.animate.set_opacity(0.3), run_time=0.5)
-        self.play(ShowCreation(graph2), run_time=2.0)
+        self.play(Create(graph2), run_time=2.0)
         self.play(Write(lbl2), run_time=1.5)
         self.wait(1)
         self.play(graph.animate.set_opacity(1.0), run_time=0.5)
@@ -333,7 +360,7 @@ class {class_name}(Scene):
         self.play(MoveAlongPath(moving_dot, graph), run_time=3)
         self.wait(1)
 
-        note = Text("{p3[:48]}", font_size=26, color=YELLOW).move_to(DOWN * 2.8)
+        note = Text("{p3[:48]}", font_size=26, color=YELLOW).next_to(axes, UP, buff=0.6)
         self.play(Write(note), run_time=2)
         self.wait({hold})
 """
@@ -350,7 +377,7 @@ class {class_name}(Scene):
         self.wait(1.5)
         self.play(ReplacementTransform(step2, step3), run_time=2.5)
         box = SurroundingRectangle(step3, color=YELLOW, buff=0.25)
-        self.play(ShowCreation(box), run_time=1.5)
+        self.play(Create(box), run_time=1.5)
         self.play(Indicate(step3, color=YELLOW), run_time=1.2)
         self.wait({hold})
 """
@@ -396,7 +423,7 @@ class {class_name}(Scene):
             background_line_style={{"stroke_opacity": 0.35}}
         )
         plane.move_to(DOWN * 0.3)
-        self.play(ShowCreation(plane), run_time=2.2)
+        self.play(Create(plane), run_time=2.2)
         self.wait(0.8)
 
         point1 = Text("{p1[:44]}", font_size=30, color=BLUE)
@@ -428,12 +455,11 @@ class {class_name}(Scene):
         self.wait({hold})
 """
 
-        source = f'''from manimlib import *
+        source = f'''from manim import *
 import numpy as np
 
 class {class_name}(Scene):
     def construct(self):
-        self.camera.background_color = BLACK
         # TITLE at grid TITLE_POS
         title = Text("{title_escaped}", font_size=42)
         self.play(Write(title), run_time=1.8)

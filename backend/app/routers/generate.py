@@ -22,7 +22,7 @@ DEFAULT_FISH_VOICE_BY_CHARACTER: dict[Character, str] = {
     Character.LEBRON: settings.FISH_VOICE_ID_LEBRON,
     Character.GOKU: settings.FISH_VOICE_ID_GOKU,
     Character.PETER: settings.FISH_VOICE_ID_PETER,
-    Character.ROGAN: settings.FISH_VOICE_ID_ROGAN,
+    Character.TAYLOR: settings.FISH_VOICE_ID_TAYLOR,
 }
 
 

@@ -29,10 +29,10 @@ const CHARACTERS: CharacterOption[] = [
     imageSrc: "/characters/peter.png",
   },
   {
-    id: Character.ROGAN,
-    name: "Alysa Liu",
-    description: "Calm and clear delivery focused on clarity and step-by-step flow.",
-    imageSrc: "/characters/rogan.png",
+    id: Character.TAYLOR,
+    name: "Taylor Swift",
+    description: "Expressive explanations with a clear, story-driven learning flow.",
+    imageSrc: "/characters/taylor.png",
   },
 ];
 

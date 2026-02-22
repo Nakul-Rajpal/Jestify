@@ -13,8 +13,17 @@ load_dotenv()
 PROJECT_ROOT = Path(__file__).resolve().parents[2]  # …/Jestify
 PIPELINE_ROOT = Path(__file__).resolve().parents[1]  # …/Jestify/pipeline
 
-STORAGE_PATH: str = os.getenv("STORAGE_PATH", str(PROJECT_ROOT / "storage"))
-ASSETS_PATH: str = os.getenv("ASSETS_PATH", str(PIPELINE_ROOT / "assets"))
+_raw_storage_path = os.getenv("STORAGE_PATH", str(PROJECT_ROOT / "storage"))
+_storage_path = Path(_raw_storage_path)
+if not _storage_path.is_absolute():
+    _storage_path = (PROJECT_ROOT / _storage_path).resolve()
+STORAGE_PATH: str = str(_storage_path)
+
+_raw_assets_path = os.getenv("ASSETS_PATH", str(PIPELINE_ROOT / "assets"))
+_assets_path = Path(_raw_assets_path)
+if not _assets_path.is_absolute():
+    _assets_path = (PROJECT_ROOT / _assets_path).resolve()
+ASSETS_PATH: str = str(_assets_path)
 
 # --------------------------------------------------------------------------- #
 # Redis / Celery

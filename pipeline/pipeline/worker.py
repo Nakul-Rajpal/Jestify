@@ -349,23 +349,39 @@ def generate_video_task(
 
     except Exception as e:
         total_elapsed = time.perf_counter() - task_t0
+        tb = traceback.format_exc()
+        error_message = str(e)
+        if isinstance(e, FileNotFoundError):
+            missing = getattr(e, "filename", None)
+            if missing:
+                error_message = f"Missing file or binary: {missing}"
+            elif "load_verify_locations" in tb:
+                error_message = (
+                    "Missing SSL certificate bundle while initializing outbound HTTPS client. "
+                    "Unset SSL_CERT_FILE/REQUESTS_CA_BUNDLE/CURL_CA_BUNDLE or install certifi."
+                )
+            else:
+                error_message = (
+                    "A required file path was not found during generation. "
+                    "Check worker environment paths and dependencies."
+                )
         logger.error("=" * 70)
         logger.error("[worker] JOB FAILED: %s after %.1fs", job_id, total_elapsed)
-        logger.error("[worker] Error: %s", e)
-        logger.error("[worker] Traceback:\n%s", traceback.format_exc())
+        logger.error("[worker] Error: %s", error_message)
+        logger.error("[worker] Traceback:\n%s", tb)
         logger.error("=" * 70)
         _update_redis_progress(
             job_id,
             status=JobStatus.FAILED.value,
             progress_percent=0,
             current_step="Failed",
-            error_message=str(e),
+            error_message=error_message,
         )
         _persist_job_to_db(
             job_id=job_id,
             status=JobStatus.FAILED.value,
             progress_percent=0,
             current_step="Failed",
-            error_message=str(e),
+            error_message=error_message,
         )
         raise

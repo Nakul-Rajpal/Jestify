@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     FISH_VOICE_ID_LEBRON: str = "ea9a7ea97af942eab87c974d422263fe"
     FISH_VOICE_ID_GOKU: str = ""
     FISH_VOICE_ID_PETER: str = ""
-    FISH_VOICE_ID_ROGAN: str = ""
+    FISH_VOICE_ID_TAYLOR: str = ""
     CONTEXT7_API_KEY: str = ""
     DOCUMENT_EXTRACT_TIMEOUT_SECONDS: int = 30
     STORAGE_PATH: str = str(PROJECT_ROOT / "storage")
@@ -31,3 +31,9 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# Normalize STORAGE_PATH so relative values in .env are project-root relative.
+_storage_path = Path(settings.STORAGE_PATH)
+if not _storage_path.is_absolute():
+    _storage_path = (PROJECT_ROOT / _storage_path).resolve()
+settings.STORAGE_PATH = str(_storage_path)

@@ -39,7 +39,7 @@ services:
       FISH_VOICE_ID_LEBRON: ${FISH_VOICE_ID_LEBRON}
       FISH_VOICE_ID_GOKU: ${FISH_VOICE_ID_GOKU}
       FISH_VOICE_ID_PETER: ${FISH_VOICE_ID_PETER}
-      FISH_VOICE_ID_ROGAN: ${FISH_VOICE_ID_ROGAN}
+      FISH_VOICE_ID_TAYLOR: ${FISH_VOICE_ID_TAYLOR}
       STORAGE_PATH: /app/storage
     depends_on:
       - postgres
@@ -48,18 +48,18 @@ services:
       - storage:/app/storage
 
   pipeline-worker:
-    build: ./pipeline
-    command: >-
-      sh -c 'CNF_DIR=$$(kpsewhich texmf.cnf 2>/dev/null | xargs dirname 2>/dev/null);
-      export TEXMFCNF="$${CNF_DIR}:";
-      export TEXMFDIST="$$(dirname "$${CNF_DIR}" 2>/dev/null)";
-      celery -A pipeline.worker worker -Q video_pipeline -c 1 --loglevel=info'
+    build:
+      context: .
+      dockerfile: pipeline/Dockerfile
     environment:
       REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql://jestify:devpassword@postgres:5432/jestify
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       FISH_API_KEY: ${FISH_API_KEY}
       FISH_MODEL: ${FISH_MODEL:-s1}
       STORAGE_PATH: /app/storage
     depends_on:
+      - postgres
       - redis
     volumes:
       - storage:/app/storage

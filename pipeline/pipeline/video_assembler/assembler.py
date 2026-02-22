@@ -44,21 +44,41 @@ class VideoAssembler:
         logger.info("[assembler] │  Concat file: %s", concat_file)
         logger.info("[assembler] │  Concat contents:\n%s", concat_contents)
 
-        cmd = [
+        fast_copy_cmd = [
             "ffmpeg", "-y",
             "-f", "concat", "-safe", "0",
             "-i", concat_file,
-            "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2",
-            "-c:v", "libx264", "-preset", "medium", "-crf", "23",
-            "-c:a", "aac", "-b:a", "192k",
+            "-c", "copy",
             "-movflags", "+faststart",
             output_path,
         ]
 
-        logger.info("[assembler] │  Command: %s", " ".join(cmd))
+        cmd = [
+            "ffmpeg", "-y",
+            "-fflags", "+genpts",
+            "-f", "concat", "-safe", "0",
+            "-i", concat_file,
+            "-map", "0:v:0", "-map", "0:a:0?",
+            "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2",
+            "-af", "aresample=async=1:first_pts=0",
+            "-c:v", "libx264", "-preset", "superfast", "-crf", "26",
+            "-c:a", "aac", "-b:a", "192k",
+            "-shortest",
+            "-movflags", "+faststart",
+            output_path,
+        ]
+
+        logger.info("[assembler] │  Fast-path command: %s", " ".join(fast_copy_cmd))
+        logger.info("[assembler] │  Fallback command: %s", " ".join(cmd))
 
         t0 = time.perf_counter()
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        result = subprocess.run(fast_copy_cmd, capture_output=True, text=True, timeout=120)
+        if result.returncode != 0:
+            logger.warning(
+                "[assembler] │  Fast-path concat-copy failed (exit %d), falling back to transcode",
+                result.returncode,
+            )
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         elapsed = time.perf_counter() - t0
 
         if result.stdout.strip():
