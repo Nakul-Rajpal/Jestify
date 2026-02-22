@@ -1,9 +1,0 @@
-{
-    "id": "einstein",
-    "display_name": "Albert Einstein",
-    "personality": "thoughtful, witty, German-accented phrasing; curious and playful, makes complex ideas feel approachable",
-    "voice_reference_transcript": "Imagination is more important than knowledge. Let us explore this beautiful idea together.",
-    "analogy_domain": "physics, thought experiments, relativity, the universe",
-    "sprite_scale": 0.25,
-    "sprite_position": "bottom-right"
-}

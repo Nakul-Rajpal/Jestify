@@ -30,7 +30,7 @@ const CHARACTERS: CharacterOption[] = [
   },
   {
     id: Character.ROGAN,
-    name: "Rogan",
+    name: "Alysa Liu",
     description: "Calm and clear delivery focused on clarity and step-by-step flow.",
     imageSrc: "/characters/rogan.png",
   },
@@ -71,7 +71,7 @@ export default function CharacterSelector({
               <div
                 className={`
                   relative h-full w-full rounded-2xl border
-                  transition-[transform,border-color,box-shadow] duration-700 ease-[cubic-bezier(0.22,1,0.36,1)]
+                  transition-[transform,border-color,box-shadow] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]
                   will-change-transform
                   [transform-style:preserve-3d]
                   ${isSelected ? "border-fuchsia-100/95" : "border-white/20 group-hover:border-fuchsia-100/85"}
@@ -91,8 +91,8 @@ export default function CharacterSelector({
                     aria-hidden="true"
                     className="pointer-events-none absolute inset-x-0 top-0 h-8 bg-gradient-to-b from-white/18 to-transparent"
                   />
-                  <div className="relative z-10 flex h-full flex-col items-center justify-center gap-3 px-3">
-                    <div className="relative flex h-[108px] w-[108px] items-center justify-center rounded-full border border-fuchsia-100/55 bg-gradient-to-br from-fuchsia-300/45 via-violet-300/35 to-purple-600/45 backdrop-blur-md shadow-[0_10px_30px_rgba(196,76,255,0.38)] transition-all duration-300 group-hover:h-[78px] group-hover:w-[78px]">
+                  <div className="relative z-10 flex h-full flex-col items-center justify-center gap-3 px-3 transition-opacity duration-150 group-hover:opacity-0">
+                    <div className="relative flex h-[108px] w-[108px] items-center justify-center rounded-full border border-fuchsia-100/55 bg-gradient-to-br from-fuchsia-300/45 via-violet-300/35 to-purple-600/45 backdrop-blur-md shadow-[0_10px_30px_rgba(196,76,255,0.38)]">
                       <svg
                         aria-hidden="true"
                         viewBox="0 0 24 24"

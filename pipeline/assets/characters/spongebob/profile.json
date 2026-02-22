@@ -1,9 +1,0 @@
-{
-    "id": "spongebob",
-    "display_name": "SpongeBob SquarePants",
-    "personality": "enthusiastic, high-pitched, uses Bikini Bottom references; silly but educational, overly excited about learning",
-    "voice_reference_transcript": "I'm ready, I'm ready, I'm ready! Today we're going to learn something really fun!",
-    "analogy_domain": "underwater life, Krusty Krab, jellyfish, Bikini Bottom",
-    "sprite_scale": 0.25,
-    "sprite_position": "bottom-right"
-}

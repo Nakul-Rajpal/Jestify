@@ -26,12 +26,12 @@ interface StageInfo {
 }
 
 const STAGE_META: Record<string, StageInfo> = {
-  [JobStatusEnum.PENDING]: { label: "Queued", icon: "⏳" },
-  [JobStatusEnum.GENERATING_SCRIPT]: { label: "Writing Script", icon: "✍️" },
-  [JobStatusEnum.RENDERING_ANIMATIONS]: { label: "Rendering Animations", icon: "🎬" },
-  [JobStatusEnum.SYNTHESIZING_VOICE]: { label: "Generating Voice", icon: "🎙️" },
-  [JobStatusEnum.COMPOSITING]: { label: "Compositing", icon: "🎨" },
-  [JobStatusEnum.ASSEMBLING]: { label: "Final Assembly", icon: "📦" },
+  [JobStatusEnum.PENDING]: { label: "Queued", icon: "" },
+  [JobStatusEnum.GENERATING_SCRIPT]: { label: "Writing Script", icon: "" },
+  [JobStatusEnum.RENDERING_ANIMATIONS]: { label: "Rendering Animations", icon: "" },
+  [JobStatusEnum.SYNTHESIZING_VOICE]: { label: "Generating Voice", icon: "" },
+  [JobStatusEnum.COMPOSITING]: { label: "Compositing", icon: "" },
+  [JobStatusEnum.ASSEMBLING]: { label: "Final Assembly", icon: "" },
 };
 
 function getCharacterName(character: Character | null): string {
@@ -166,7 +166,7 @@ export default function JobStatusComponent({
                       <path d="M12 2a10 10 0 018.66 5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="text-blue-400" />
                     </svg>
                   ) : (
-                    <span className="text-neutral-600">{meta.icon}</span>
+                    <span className="block w-2 h-2 rounded-full bg-neutral-600 mx-auto" />
                   )}
                 </span>
                 <span
