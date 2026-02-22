@@ -457,6 +457,13 @@ class PipelineOrchestrator:
         progress_lock = threading.Lock()
         completed = [0]
 
+        # Per-character sprite scale overrides (default 0.20)
+        _SPRITE_SCALES = {
+            "goku": 0.30,
+            "peter": 0.22,
+        }
+        sprite_scale = _SPRITE_SCALES.get(character_id, 0.20)
+
         def _composite_one(idx: int) -> tuple[int, str]:
             scene, anim_clip = rendered[idx]
             comp_t0 = time.perf_counter()
@@ -468,6 +475,7 @@ class PipelineOrchestrator:
                 character_sprite=sprite_path,
                 audio_file=audio_clips[idx],
                 output_path=composited_path,
+                scale=sprite_scale,
             )
             comp_size = Path(composited_path).stat().st_size / (1024 * 1024)
             elapsed = time.perf_counter() - comp_t0
