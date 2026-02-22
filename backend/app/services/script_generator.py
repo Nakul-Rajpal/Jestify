@@ -41,6 +41,24 @@ DIFFICULTY_INSTRUCTIONS: dict[Difficulty, str] = {
     ),
 }
 
+DIFFICULTY_VIDEO_STRUCTURE: dict[Difficulty, dict] = {
+    Difficulty.BEGINNER: {
+        "num_scenes": "6 to 8",
+        "total_duration": "about 2 minutes",
+        "scene_duration": "~15 seconds each",
+    },
+    Difficulty.INTERMEDIATE: {
+        "num_scenes": "14 to 18",
+        "total_duration": "about 4 minutes",
+        "scene_duration": "~15 seconds each",
+    },
+    Difficulty.ADVANCED: {
+        "num_scenes": "28 to 34",
+        "total_duration": "about 8 minutes",
+        "scene_duration": "~15 seconds each",
+    },
+}
+
 # Built-in ManimGL reference so the LLM always has a baseline even if
 # Context7 is unavailable.
 MANIMGL_REFERENCE = r"""
@@ -384,7 +402,7 @@ class ScriptGenerator:
         logger.info("[script_gen] │  Context7 fetch: %.1fs, %d chars", docs_elapsed, len(live_docs))
 
         system_prompt = self._build_system_prompt(
-            personality, difficulty_instruction, live_docs
+            personality, difficulty_instruction, live_docs, difficulty
         )
         user_message = self._build_user_message(extracted_text, user_prompt)
 
@@ -551,6 +569,7 @@ class ScriptGenerator:
         personality,
         difficulty_instruction: str,
         live_manim_docs: str = "",
+        difficulty: Difficulty = Difficulty.BEGINNER,
     ) -> str:
         live_docs_section = ""
         if live_manim_docs:
@@ -571,6 +590,8 @@ for understanding class hierarchies and conceptual patterns.
 {live_manim_docs}
 ================================================================================
 """
+
+        video_structure = DIFFICULTY_VIDEO_STRUCTURE[difficulty]
 
         return f"""\
 You are an expert educational animation developer producing 3Blue1Brown-quality \
@@ -639,11 +660,12 @@ RUNNABLE ManimGL Python code. Each scene's code:
 - Keep Tex strings simple — avoid overly complex nested environments.
 
 === VIDEO STRUCTURE (MANDATORY) ===
-- Generate 5 to 7 scenes for a video totaling 1.5 to 3 minutes.
-- Scene 0: Concept introduction (20-30 seconds) — title card + key concepts
-- Scenes 1-4: Core teaching content (30-45 seconds each) — equations, graphs, \
+- Generate {video_structure["num_scenes"]} scenes for a video totaling {video_structure["total_duration"]}.
+- Each scene should be {video_structure["scene_duration"]} (use self.wait() to pad timing).
+- Scene 0: Concept introduction (~15 seconds) — title card + key concepts
+- Middle scenes: Core teaching content (~15 seconds each) — equations, graphs, \
   diagrams, step-by-step builds
-- Last scene: Summary/recap (20-30 seconds) — key takeaways
+- Last scene: Summary/recap (~15 seconds) — key takeaways
 - EVERY video MUST include at least:
   * One scene with Axes and plotted functions (use axes.get_graph())
   * One scene with step-by-step equation transforms using Tex

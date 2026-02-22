@@ -5,12 +5,13 @@ import { Difficulty } from "@/types";
 interface DifficultyOption {
   id: Difficulty;
   label: string;
+  duration: string;
 }
 
 const DIFFICULTIES: DifficultyOption[] = [
-  { id: Difficulty.BEGINNER, label: "Beginner" },
-  { id: Difficulty.INTERMEDIATE, label: "Intermediate" },
-  { id: Difficulty.ADVANCED, label: "Advanced" },
+  { id: Difficulty.BEGINNER, label: "Beginner", duration: "~2 min" },
+  { id: Difficulty.INTERMEDIATE, label: "Intermediate", duration: "~4 min" },
+  { id: Difficulty.ADVANCED, label: "Advanced", duration: "~8 min" },
 ];
 
 interface DifficultySelectorProps {
@@ -46,6 +47,7 @@ export default function DifficultySelector({
               `}
             >
               {difficulty.label}
+              <span className="ml-1.5 text-xs opacity-60">{difficulty.duration}</span>
             </button>
           );
         })}
