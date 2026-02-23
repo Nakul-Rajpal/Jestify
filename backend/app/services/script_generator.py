@@ -11,6 +11,7 @@ import logging
 import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional
 
@@ -23,20 +24,80 @@ from shared.contracts.pipeline_schema import GeneratedScript
 
 from ..config import settings
 from .context7_docs import get_manim_docs
+from .fewshot_examples import NARRATION_FEWSHOT, CODE_FEWSHOT
 
 logger = logging.getLogger(__name__)
 
-CLAUDE_MODEL = "claude-sonnet-4-20250514"
+CLAUDE_MODEL = "claude-sonnet-4-20250514"          # narration (creative writing)
+CODE_MODEL = os.getenv("CODE_MODEL", "claude-haiku-4-5-20251001")  # code gen (fast, cheap)
+MAX_CODE_WORKERS = int(os.getenv("MAX_CODE_WORKERS", "8"))  # parallel scene code gen
 FAST_MODE = os.getenv("FAST_GENERATION_MODE", "true").lower() in {"1", "true", "yes"}
 ENABLE_CONTEXT7 = os.getenv("ENABLE_CONTEXT7_DOCS", "false").lower() in {"1", "true", "yes"}
 MAX_SOURCE_CHARS = int(os.getenv("MAX_SOURCE_CHARS", "8000"))
-FAST_TARGET_SCENES = int(os.getenv("FAST_TARGET_SCENES", "5"))
-FAST_MIN_SCENE_SECONDS = int(os.getenv("FAST_MIN_SCENE_SECONDS", "18"))
-FAST_MAX_SCENE_SECONDS = int(os.getenv("FAST_MAX_SCENE_SECONDS", "24"))
 FAST_CODE_MAX_TOKENS = int(os.getenv("FAST_CODE_MAX_TOKENS", "8192"))
-TARGET_TOTAL_MIN_SECONDS = FAST_TARGET_SCENES * FAST_MIN_SCENE_SECONDS
-TARGET_TOTAL_MAX_SECONDS = FAST_TARGET_SCENES * FAST_MAX_SCENE_SECONDS
-MIN_VISUAL_STRUCTURE_SCENES = max(2, FAST_TARGET_SCENES // 2)
+
+
+class _DifficultyConfig:
+    """Per-difficulty scene count and timing configuration."""
+
+    __slots__ = (
+        "target_scenes", "min_scene_seconds", "max_scene_seconds",
+        "total_min_seconds", "total_max_seconds", "min_visual_structure_scenes",
+        "code_max_tokens", "min_words_per_scene", "max_words_per_scene",
+        "min_play_calls",
+    )
+
+    def __init__(
+        self, target_scenes: int, min_scene_seconds: int,
+        max_scene_seconds: int, code_max_tokens: int,
+        min_words_per_scene: int, max_words_per_scene: int,
+        min_play_calls: int,
+    ):
+        self.target_scenes = target_scenes
+        self.min_scene_seconds = min_scene_seconds
+        self.max_scene_seconds = max_scene_seconds
+        self.total_min_seconds = target_scenes * min_scene_seconds
+        self.total_max_seconds = target_scenes * max_scene_seconds
+        self.min_visual_structure_scenes = max(2, target_scenes // 2)
+        self.code_max_tokens = code_max_tokens
+        # Narration length (drives TTS audio duration — ~150 WPM)
+        self.min_words_per_scene = min_words_per_scene
+        self.max_words_per_scene = max_words_per_scene
+        # Minimum self.play() calls per scene (drives animation duration)
+        self.min_play_calls = min_play_calls
+
+
+# Frontend promises: beginner ~2min, intermediate ~4min, advanced ~8min
+# Word counts calibrated to TTS at ~150 WPM:
+#   45 words ≈ 18s, 60 words ≈ 24s, 80 words ≈ 32s, 100 words ≈ 40s, 120 words ≈ 48s
+DIFFICULTY_CONFIGS: dict[Difficulty, _DifficultyConfig] = {
+    Difficulty.BEGINNER: _DifficultyConfig(
+        target_scenes=5, min_scene_seconds=20,
+        max_scene_seconds=28, code_max_tokens=FAST_CODE_MAX_TOKENS,
+        min_words_per_scene=50, max_words_per_scene=70,
+        min_play_calls=4,
+    ),
+    Difficulty.INTERMEDIATE: _DifficultyConfig(
+        target_scenes=8, min_scene_seconds=25,
+        max_scene_seconds=35, code_max_tokens=FAST_CODE_MAX_TOKENS * 2,
+        min_words_per_scene=65, max_words_per_scene=90,
+        min_play_calls=5,
+    ),
+    Difficulty.ADVANCED: _DifficultyConfig(
+        target_scenes=12, min_scene_seconds=30,
+        max_scene_seconds=45, code_max_tokens=FAST_CODE_MAX_TOKENS * 3,
+        min_words_per_scene=75, max_words_per_scene=110,
+        min_play_calls=6,
+    ),
+}
+
+# Backwards-compatible defaults (used where difficulty isn't available)
+FAST_TARGET_SCENES = DIFFICULTY_CONFIGS[Difficulty.BEGINNER].target_scenes
+FAST_MIN_SCENE_SECONDS = DIFFICULTY_CONFIGS[Difficulty.BEGINNER].min_scene_seconds
+FAST_MAX_SCENE_SECONDS = DIFFICULTY_CONFIGS[Difficulty.BEGINNER].max_scene_seconds
+TARGET_TOTAL_MIN_SECONDS = DIFFICULTY_CONFIGS[Difficulty.BEGINNER].total_min_seconds
+TARGET_TOTAL_MAX_SECONDS = DIFFICULTY_CONFIGS[Difficulty.BEGINNER].total_max_seconds
+MIN_VISUAL_STRUCTURE_SCENES = DIFFICULTY_CONFIGS[Difficulty.BEGINNER].min_visual_structure_scenes
 
 DIFFICULTY_INSTRUCTIONS: dict[Difficulty, str] = {
     Difficulty.BEGINNER: (
@@ -94,6 +155,23 @@ SHAPES & GEOMETRY:
   DoubleArrow(start, end)                        — arrow with tips on both ends
   Polygon(*points), RegularPolygon(n=6)
   Arc(angle), AnnularSector(inner_radius, outer_radius, angle)
+
+MATRICES (no LaTeX — built-in bracket rendering):
+  Matrix([[1, 2], [3, 4]])                    — generic matrix with brackets
+  IntegerMatrix([[1, 0], [0, 1]])             — integer entries (no decimals)
+  DecimalMatrix([[1.5, 2.0], [3.1, 4.0]])     — decimal entries
+  m.get_entries()                              — VGroup of all entry mobjects
+  m.get_rows()                                 — list of VGroups per row
+  m.get_columns()                              — list of VGroups per column
+  m.get_brackets()                             — the bracket mobjects
+  IMPORTANT: Matrix entries are auto-rendered as Text. Do NOT build matrices
+  manually with Text() elements — always use Matrix/IntegerMatrix classes.
+  NEVER use MathTable for matrices. NEVER use MathTex for matrices.
+  Example — matrix multiplication:
+    A = IntegerMatrix([[1, 2], [3, 4]], left_bracket="(", right_bracket=")")
+    B = IntegerMatrix([[5, 6], [7, 8]], left_bracket="(", right_bracket=")")
+    A.shift(LEFT * 3); B.next_to(A, RIGHT, buff=1)
+    self.play(Create(A), Create(B))
 
 TABLES (no LaTeX — uses Pango text rendering):
   Table([["A","B"],["C","D"]],
@@ -253,7 +331,7 @@ class ScriptGenerator:
         try:
             http_client = httpx.Client(
                 verify=verify,
-                timeout=httpx.Timeout(120.0, connect=20.0),
+                timeout=httpx.Timeout(600.0, connect=30.0),
             )
             self.client = anthropic.Anthropic(
                 api_key=settings.ANTHROPIC_API_KEY,
@@ -285,6 +363,12 @@ class ScriptGenerator:
 
         personality = CHARACTER_PERSONALITIES[character]
         difficulty_instruction = DIFFICULTY_INSTRUCTIONS[difficulty]
+        dcfg = DIFFICULTY_CONFIGS[difficulty]
+        logger.info(
+            "[script_gen] │  Difficulty config: %d scenes, %d-%ds/scene, target %d-%ds total",
+            dcfg.target_scenes, dcfg.min_scene_seconds, dcfg.max_scene_seconds,
+            dcfg.total_min_seconds, dcfg.total_max_seconds,
+        )
 
         if len(extracted_text) > MAX_SOURCE_CHARS:
             logger.info(
@@ -308,22 +392,22 @@ class ScriptGenerator:
         logger.info("[script_gen] │")
         logger.info("[script_gen] │  ── CALL 1: Narration ──")
         narration_data, narr_elapsed = self._generate_narration(
-            extracted_text, personality, difficulty_instruction, user_prompt,
+            extracted_text, personality, difficulty_instruction, user_prompt, dcfg,
         )
-        narration_errors = self._validate_narration(narration_data, personality)
+        narration_errors = self._validate_narration(narration_data, personality, dcfg)
         if narration_errors and not FAST_MODE:
             logger.warning("[script_gen] │  Narration issues: %s", narration_errors)
             feedback = (
                 "Regenerate the full JSON and fix ALL issues:\n- "
                 + "\n- ".join(narration_errors)
             )
-            narr_user = self._build_narration_user_message(extracted_text, user_prompt)
+            narr_user = self._build_narration_user_message(extracted_text, user_prompt, dcfg)
             retry_msg = f"{narr_user}\n\n{feedback}"
-            narr_sys = self._build_narration_system_prompt(personality, difficulty_instruction)
+            narr_sys = self._build_narration_system_prompt(personality, difficulty_instruction, dcfg)
             resp, retry_elapsed = self._request_script(narr_sys, retry_msg, max_tokens=4096)
             narr_elapsed += retry_elapsed
             narration_data = self._parse_response(resp)
-            remaining = self._validate_narration(narration_data, personality)
+            remaining = self._validate_narration(narration_data, personality, dcfg)
             if remaining:
                 logger.warning("[script_gen] │  Narration issues remain: %s. Continuing.", remaining)
 
@@ -332,7 +416,7 @@ class ScriptGenerator:
 
         if FAST_MODE:
             narration_scenes = narration_data.get("scenes") or []
-            narration_data["scenes"] = self._optimize_scenes_for_speed(narration_scenes)
+            narration_data["scenes"] = self._optimize_scenes_for_speed(narration_scenes, dcfg)
             narration_data["total_scenes"] = len(narration_data["scenes"])
             logger.info(
                 "[script_gen] │  Fast mode trimmed narration to %d scenes",
@@ -342,25 +426,10 @@ class ScriptGenerator:
         # ── Call 2: Generate ManimCE code (narration as input) ───────
         logger.info("[script_gen] │")
         logger.info("[script_gen] │  ── CALL 2: Code generation ──")
-        code_data, code_elapsed = self._generate_code(narration_data, live_docs)
-        code_errors = self._validate_code(code_data)
-        if code_errors and not FAST_MODE:
-            logger.warning("[script_gen] │  Code issues: %s", code_errors)
-            feedback = (
-                "Regenerate the full JSON array and fix ALL issues:\n- "
-                + "\n- ".join(code_errors)
-            )
-            code_user = self._build_code_user_message(narration_data)
-            retry_msg = f"{code_user}\n\n{feedback}"
-            code_sys = self._build_code_system_prompt(live_docs)
-            resp, retry_elapsed = self._request_script(code_sys, retry_msg, max_tokens=16384)
-            code_elapsed += retry_elapsed
-            code_data = self._parse_response(resp)
-            if isinstance(code_data, list):
-                code_data = {"scenes": code_data}
-            remaining = self._validate_code(code_data)
-            if remaining:
-                logger.warning("[script_gen] │  Code issues remain: %s. Continuing.", remaining)
+        code_data, code_elapsed = self._generate_code(narration_data, live_docs, dcfg)
+        code_errors = self._validate_code(code_data, dcfg)
+        if code_errors:
+            logger.warning("[script_gen] │  Code issues (non-blocking): %s", code_errors)
 
         # ── Merge narration + code into final GeneratedScript ────────
         narration_scenes = narration_data.get("scenes", [])
@@ -379,7 +448,7 @@ class ScriptGenerator:
                 "manim_code": cs.get("manim_code", "") if cs else "",
             })
         if FAST_MODE:
-            merged_scenes = self._optimize_scenes_for_speed(merged_scenes)
+            merged_scenes = self._optimize_scenes_for_speed(merged_scenes, dcfg)
 
         script_data = {
             "title": narration_data.get("title", "Untitled"),
@@ -417,17 +486,22 @@ class ScriptGenerator:
         personality,
         difficulty_instruction: str,
         user_prompt: Optional[str],
+        dcfg: _DifficultyConfig,
     ) -> tuple[dict, float]:
         """Call 1: generate narration script only (no Manim code)."""
-        sys_prompt = self._build_narration_system_prompt(personality, difficulty_instruction)
-        user_msg = self._build_narration_user_message(extracted_text, user_prompt)
+        sys_prompt = self._build_narration_system_prompt(personality, difficulty_instruction, dcfg)
+        user_msg = self._build_narration_user_message(extracted_text, user_prompt, dcfg)
         logger.info("[script_gen] │  Narration system prompt: %d chars", len(sys_prompt))
         logger.info("[script_gen] │  Narration user message: %d chars", len(user_msg))
-        resp, elapsed = self._request_script(sys_prompt, user_msg, max_tokens=2048 if FAST_MODE else 4096)
+        # Scale max_tokens with scene count
+        narr_max_tokens = max(2048, dcfg.target_scenes * 400)
+        resp, elapsed = self._request_script(sys_prompt, user_msg, max_tokens=narr_max_tokens)
         logger.info("[script_gen] │  Narration response: %d chars (%.1fs)", len(resp), elapsed)
         return self._parse_response(resp), elapsed
 
-    def _build_narration_system_prompt(self, personality, difficulty_instruction: str) -> str:
+    def _build_narration_system_prompt(
+        self, personality, difficulty_instruction: str, dcfg: _DifficultyConfig,
+    ) -> str:
         return f"""\
 You are an expert educational script writer. You write narration scripts for \
 animated educational videos — like 3Blue1Brown but voiced by a specific character.
@@ -458,8 +532,9 @@ The audience should FEEL like {personality.display_name} is personally teaching 
    understand X, let's look at Y" or "Building on that idea..." No dead air, \
    no abrupt topic switches, no repeated introductions.
 
-3. NARRATION LENGTH: Each scene's narration_text MUST be 3-5 sentences \
-   (45-80 words). Keep language concise but complete for scene pacing.
+3. NARRATION LENGTH: Each scene's narration_text MUST be {dcfg.min_words_per_scene}-{dcfg.max_words_per_scene} words \
+   (this controls video duration via text-to-speech — longer narration = longer scene). \
+   Count your words carefully. Do NOT go under {dcfg.min_words_per_scene} words per scene.
 
 4. CHARACTER VOICE: The narration must sound like the character is personally \
    explaining the topic. NOT a generic textbook. Use catchphrases, tone, and \
@@ -477,15 +552,15 @@ The audience should FEEL like {personality.display_name} is personally teaching 
 DIFFICULTY: {difficulty_instruction}
 
 === VIDEO STRUCTURE (MANDATORY) ===
-- Generate exactly {FAST_TARGET_SCENES} scenes for a video totaling about {TARGET_TOTAL_MIN_SECONDS} to {TARGET_TOTAL_MAX_SECONDS} seconds.
-- Scene 0: Concept introduction ({FAST_MIN_SCENE_SECONDS}-{FAST_MAX_SCENE_SECONDS}s) — hook with character analogy + key concepts
+- Generate exactly {dcfg.target_scenes} scenes for a video totaling about {dcfg.total_min_seconds} to {dcfg.total_max_seconds} seconds.
+- Scene 0: Concept introduction ({dcfg.min_scene_seconds}-{dcfg.max_scene_seconds}s) — hook with character analogy + key concepts
 - Scene 1 or 2: GRAPH SCENE (MANDATORY) — describe a graph/plot that visualizes a \
   function, trend, or relationship. Set manim_scene_type="graph". \
   Even non-math topics can have graphs: growth rates, timelines, comparisons.
 - Scene 2 or 3: EQUATION/TRANSFORM SCENE — describe step-by-step derivation or \
   concept evolution. Set manim_scene_type="equation".
-- Remaining scenes: Core teaching content ({FAST_MIN_SCENE_SECONDS}-{FAST_MAX_SCENE_SECONDS}s each) — diagrams, visual structures
-- Last scene: Summary/recap ({FAST_MIN_SCENE_SECONDS}-{FAST_MAX_SCENE_SECONDS}s) — key takeaways
+- Remaining scenes: Core teaching content ({dcfg.min_scene_seconds}-{dcfg.max_scene_seconds}s each) — diagrams, visual structures
+- Last scene: Summary/recap ({dcfg.min_scene_seconds}-{dcfg.max_scene_seconds}s) — key takeaways
 
 === OUTPUT FORMAT ===
 Respond with ONLY valid JSON (no markdown fences, no extra text):
@@ -505,11 +580,17 @@ Respond with ONLY valid JSON (no markdown fences, no extra text):
     "intro_text": "Engaging introduction",
     "outro_text": "Memorable closing"
 }}
+
+{NARRATION_FEWSHOT}
 """
 
-    def _build_narration_user_message(self, extracted_text: str, user_prompt: Optional[str]) -> str:
+    def _build_narration_user_message(
+        self, extracted_text: str, user_prompt: Optional[str],
+        dcfg: _DifficultyConfig | None = None,
+    ) -> str:
+        cfg = dcfg or DIFFICULTY_CONFIGS[Difficulty.BEGINNER]
         message = f"""\
-Write a concise narration script with exactly {FAST_TARGET_SCENES} scenes based on this source material.
+Write a concise narration script with exactly {cfg.target_scenes} scenes based on this source material.
 Analyze the material carefully — identify the key concepts, relationships, \
 and problems, then write engaging narration that TEACHES them.
 
@@ -518,40 +599,43 @@ and problems, then write engaging narration that TEACHES them.
 --- END SOURCE MATERIAL ---
 
 REQUIREMENTS:
-1. Generate exactly {FAST_TARGET_SCENES} scenes with narration_text and visual_description for each
-2. Total video duration: {TARGET_TOTAL_MIN_SECONDS} to {TARGET_TOTAL_MAX_SECONDS} seconds (sum of duration_hint_seconds)
-3. Each scene should target {FAST_MIN_SCENE_SECONDS}-{FAST_MAX_SCENE_SECONDS} seconds
-4. MANDATORY: At least one scene with manim_scene_type="graph"
-5. Include at least one equation/derivation scene
-6. Last scene must be a summary/recap
-7. visual_description must be specific enough for an animation generator
-8. Stay in character throughout — this should sound like a real person teaching
+1. Generate exactly {cfg.target_scenes} scenes with narration_text and visual_description for each
+2. Total video duration: {cfg.total_min_seconds} to {cfg.total_max_seconds} seconds (sum of duration_hint_seconds)
+3. Each scene's duration_hint_seconds MUST be {cfg.min_scene_seconds}-{cfg.max_scene_seconds}
+4. CRITICAL — NARRATION LENGTH: Each scene's narration_text MUST be {cfg.min_words_per_scene}-{cfg.max_words_per_scene} words. \
+This directly controls video length via text-to-speech. Short narration = short video. Count carefully.
+5. MANDATORY: At least one scene with manim_scene_type="graph"
+6. Include at least one equation/derivation scene
+7. Last scene must be a summary/recap
+8. visual_description must be specific enough for an animation generator
+9. Stay in character throughout — this should sound like a real person teaching
 """
         if user_prompt:
             message += f"\nAdditional instructions: {user_prompt}\n"
         message += "\nRespond with ONLY the JSON object. No markdown fences."
         return message
 
-    def _validate_narration(self, script_data: dict, personality=None) -> list[str]:
+    def _validate_narration(self, script_data: dict, personality=None, dcfg: "_DifficultyConfig | None" = None) -> list[str]:
         """Validate narration-only output from Call 1."""
+        cfg = dcfg or DIFFICULTY_CONFIGS[Difficulty.BEGINNER]
         errors: list[str] = []
         scenes = script_data.get("scenes") or []
-        if len(scenes) < FAST_TARGET_SCENES:
-            errors.append(f"Need at least {FAST_TARGET_SCENES} scenes.")
+        if len(scenes) < cfg.target_scenes:
+            errors.append(f"Need at least {cfg.target_scenes} scenes.")
             return errors
 
         for idx, scene in enumerate(scenes):
             narration = (scene.get("narration_text") or "").strip()
             word_count = len(narration.split())
-            if word_count < 40:
+            if word_count < cfg.min_words_per_scene - 10:
                 errors.append(
                     f"Scene {idx+1} narration_text too short ({word_count} words). "
-                    "Must be 3-5 concise sentences (45-80 words)."
+                    f"Must be {cfg.min_words_per_scene}-{cfg.max_words_per_scene} words."
                 )
-            if word_count > 100:
+            if word_count > cfg.max_words_per_scene + 30:
                 errors.append(
                     f"Scene {idx+1} narration_text too long ({word_count} words). "
-                    "Keep each scene concise and avoid long paragraphs."
+                    f"Keep each scene to {cfg.min_words_per_scene}-{cfg.max_words_per_scene} words."
                 )
             if idx == 0 and personality and hasattr(personality, "analogy_domain"):
                 domain_phrases = personality.analogy_domain.lower().split(", ")
@@ -570,10 +654,10 @@ REQUIREMENTS:
         total_duration = sum(
             float(s.get("duration_hint_seconds", 0) or 0) for s in scenes
         )
-        if total_duration < (TARGET_TOTAL_MIN_SECONDS - 10):
+        if total_duration < (cfg.total_min_seconds - 10):
             errors.append(
                 f"Total duration too short ({total_duration:.1f}s). "
-                f"Target >= {TARGET_TOTAL_MIN_SECONDS}s."
+                f"Target >= {cfg.total_min_seconds}s."
             )
 
         has_graph = any(
@@ -584,14 +668,15 @@ REQUIREMENTS:
 
         return errors
 
-    def _optimize_scenes_for_speed(self, scenes: list[dict]) -> list[dict]:
-        """Trim scene count and cap durations to keep generation fast."""
+    def _optimize_scenes_for_speed(self, scenes: list[dict], dcfg: "_DifficultyConfig | None" = None) -> list[dict]:
+        """Trim scene count and cap durations based on difficulty config."""
+        cfg = dcfg or DIFFICULTY_CONFIGS[Difficulty.BEGINNER]
         optimized = []
-        for i, scene in enumerate(scenes[:FAST_TARGET_SCENES]):
-            dur = int(float(scene.get("duration_hint_seconds", FAST_MAX_SCENE_SECONDS) or FAST_MAX_SCENE_SECONDS))
+        for i, scene in enumerate(scenes[:cfg.target_scenes]):
+            dur = int(float(scene.get("duration_hint_seconds", cfg.max_scene_seconds) or cfg.max_scene_seconds))
             scene = dict(scene)
             scene["scene_index"] = i
-            scene["duration_hint_seconds"] = max(FAST_MIN_SCENE_SECONDS, min(dur, FAST_MAX_SCENE_SECONDS))
+            scene["duration_hint_seconds"] = max(cfg.min_scene_seconds, min(dur, cfg.max_scene_seconds))
             optimized.append(scene)
         return optimized
 
@@ -600,21 +685,57 @@ REQUIREMENTS:
     # ──────────────────────────────────────────────────────────────────
 
     def _generate_code(
-        self, narration_data: dict, live_manim_docs: str,
+        self, narration_data: dict, live_manim_docs: str, dcfg: "_DifficultyConfig | None" = None,
     ) -> tuple[dict, float]:
-        """Call 2: generate ManimCE code for each scene based on narration."""
-        sys_prompt = self._build_code_system_prompt(live_manim_docs)
-        user_msg = self._build_code_user_message(narration_data)
+        """Call 2: generate ManimCE code — parallel per-scene calls using fast model."""
+        cfg = dcfg or DIFFICULTY_CONFIGS[Difficulty.BEGINNER]
+        sys_prompt = self._build_code_system_prompt(live_manim_docs, cfg)
+        scenes = narration_data.get("scenes", [])
+        title = narration_data.get("title", "Untitled")
+        logger.info("[script_gen] │  Code model: %s (parallel, %d scenes)", CODE_MODEL, len(scenes))
         logger.info("[script_gen] │  Code system prompt: %d chars", len(sys_prompt))
-        logger.info("[script_gen] │  Code user message: %d chars", len(user_msg))
-        resp, elapsed = self._request_script(sys_prompt, user_msg, max_tokens=FAST_CODE_MAX_TOKENS)
-        logger.info("[script_gen] │  Code response: %d chars (%.1fs)", len(resp), elapsed)
-        data = self._parse_response(resp)
-        if isinstance(data, list):
-            data = {"scenes": data}
-        return data, elapsed
 
-    def _build_code_system_prompt(self, live_manim_docs: str = "") -> str:
+        t0 = time.perf_counter()
+        results: dict[int, dict] = {}
+        errors: dict[int, str] = {}
+
+        def _gen_one(scene_data: dict) -> tuple[int, dict]:
+            idx = scene_data.get("scene_index", 0)
+            user_msg = self._build_single_scene_user_message(scene_data, title, cfg)
+            resp_text, _ = self._request_code(sys_prompt, user_msg, max_tokens=4096)
+            parsed = self._parse_response(resp_text)
+            # Handle both {"scene_index":0,"manim_code":"..."} and {"scenes":[...]}
+            if isinstance(parsed, dict) and "scenes" in parsed:
+                scene_result = parsed["scenes"][0] if parsed["scenes"] else {}
+            elif isinstance(parsed, list):
+                scene_result = parsed[0] if parsed else {}
+            else:
+                scene_result = parsed
+            scene_result["scene_index"] = idx
+            return idx, scene_result
+
+        workers = min(MAX_CODE_WORKERS, len(scenes))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(_gen_one, s): s.get("scene_index", i) for i, s in enumerate(scenes)}
+            for future in as_completed(futures):
+                idx = futures[future]
+                try:
+                    scene_idx, scene_result = future.result()
+                    results[scene_idx] = scene_result
+                    logger.info("[script_gen] │  Scene %d code: %d chars", scene_idx, len(scene_result.get("manim_code", "")))
+                except Exception as e:
+                    errors[idx] = str(e)
+                    logger.error("[script_gen] │  Scene %d code gen FAILED: %s", idx, e)
+
+        elapsed = time.perf_counter() - t0
+        logger.info("[script_gen] │  All code generated in %.1fs (%d OK, %d failed)", elapsed, len(results), len(errors))
+
+        # Assemble in scene order
+        ordered_scenes = [results[i] for i in sorted(results.keys())]
+        return {"scenes": ordered_scenes}, elapsed
+
+    def _build_code_system_prompt(self, live_manim_docs: str = "", dcfg: "_DifficultyConfig | None" = None) -> str:
+        cfg = dcfg or DIFFICULTY_CONFIGS[Difficulty.BEGINNER]
         live_docs_section = ""
         if live_manim_docs:
             live_docs_section = f"""
@@ -648,89 +769,24 @@ at that exact moment in the animation.
 {MANIMCE_REFERENCE}
 {live_docs_section}
 
-=== STRICT TYPOGRAPHY & LEGIBILITY RULES ===
-- No walls of text — use bullet points, keywords, or short phrases only
-- Minimum font sizes: headers 40-48, body 28-36, absolute minimum 24
-- Use weight=BOLD for titles: Text("Title", font_size=44, weight=BOLD)
-- Max 3-4 visual elements on screen at once
-- NEVER display paragraphs of text. Use progressive reveal instead.
-
-=== GRID LAYOUT SYSTEM (MANDATORY) ===
+=== LAYOUT & VISUAL RULES ===
 Frame: 14.2 x 8 units. Safe zone: x in [-6.0, 6.0], y in [-3.2, 3.2].
+Camera auto-adjusts: if content overflows the frame, the camera zooms out to fit.
+Still aim for good positioning within the safe zone — auto-zoom is a safety net.
+- Title at UP*3.2, main content at DOWN*0.3, sprite safe zone: x<=-4.2, y>=1.4
+- Font sizes: headers 40-48, body 28-36, minimum 24. Use weight=BOLD for titles.
+- Max 3 text elements on screen. Use LaggedStart for lists, NEVER bulk FadeIn.
+- Dim old content: self.play(prev.animate.set_opacity(0.3))
+- Use visual structures (graphs, diagrams, tables) NOT text walls.
+- Colors on BLACK: TITLES=WHITE/GOLD, PRIMARY=BLUE, SECONDARY=GREEN, HIGHLIGHT=YELLOW.
 
-Named grid positions — use these for ALL placement:
-  TITLE_POS    = UP * 3.2               — title bar (always here)
-  SUBTITLE_POS = UP * 2.3               — section headers / subtitle
-  MAIN_AREA    = DOWN * 0.3             — primary content below title
-  LEFT_PANEL   = LEFT * 3.2             — split-screen left
-  RIGHT_PANEL  = RIGHT * 3.2            — split-screen right
-  SPRITE_SAFE_ZONE = top-left quadrant  — keep x <= -4.2 and y >= 1.4 visually clear
-
-Layout patterns — pick ONE per scene:
-  Full Center:    Title at UP*3.2, single content at DOWN*0.3
-  Split Screen:   Title at UP*3.2, text at LEFT*3.2, visual at RIGHT*3.2
-  Vertical Stack: Title at UP*3.2, VGroup.arrange(DOWN, buff=0.6).move_to(DOWN*0.3)
-  Graph Layout:   Title at UP*3.2, axes.move_to(DOWN*0.3)
-
-Size safety — apply AFTER building groups:
-  - VGroup with 4+ items:  group.set_height(min(group.get_height(), 4.8))
-  - Horizontal with 3+ items: group.set_width(min(group.get_width(), 12.0))
-  - NEVER .shift() with magnitude > 3.5
-  - NEVER place content below y = -3.0 or above y = 3.5
-
-=== COGNITIVE LOAD & FOCUS ANIMATION ===
-- Dim previous elements when new content appears:
-    self.play(prev_group.animate.set_opacity(0.3))
-- Restore when revisiting: self.play(prev_group.animate.set_opacity(1.0))
-- Emphasis animations:
-    Indicate(mob, color=YELLOW)        — "Notice this..."
-    Circumscribe(mob, color=YELLOW)    — "This is critical..."
-    SurroundingRectangle(mob, color)    — persistent highlight
-- ALWAYS use LaggedStart for revealing lists:
-    self.play(LaggedStart(*[FadeIn(b, shift=UP*0.3) for b in bullets], lag_ratio=0.2))
-  NEVER FadeIn an entire VGroup at once.
-
-=== SCENE LIFECYCLE — CLEAR BEFORE BUILD (MANDATORY) ===
-Every construct() follows: TITLE -> BUILD -> (optional TRANSITION) -> CLEANUP.
-
-1. Each scene starts with a blank frame.
-2. Title always first: title.move_to(UP * 3.2) then build content below.
-3. When a scene has two logical ideas, FadeOut ALL non-title elements between them.
-4. The LAST two lines of EVERY construct() MUST be:
+=== SCENE LIFECYCLE (MANDATORY) ===
+1. Title first: title.move_to(UP * 3.2)
+2. Build content below title
+3. FadeOut old content before new sections
+4. LAST two lines MUST be:
      self.play(*[FadeOut(m) for m in self.mobjects], run_time=1.5)
      self.wait(1)
-
-=== VISUAL-FIRST RULE — NEVER PLAIN TEXT WALLS (CRITICAL) ===
-Convert textual information into VISUAL STRUCTURES whenever possible.
-If content is a list → build a TREE, TABLE, or FLOWCHART, NOT stacked Text lines.
-If content describes relationships → use ARROWS, CONNECTORS, and DIAGRAMS.
-MANDATORY: At least {MIN_VISUAL_STRUCTURE_SCENES} scenes MUST use visual structures.
-
-=== TEXT OVERLAP PREVENTION (CRITICAL) ===
-1. Before placing NEW content, ALWAYS FadeOut or dim existing content.
-2. NEVER two Text objects at same y-position without 0.8+ units gap.
-3. MAXIMUM 3 text elements visible simultaneously.
-4. Use VGroup(...).arrange(..., buff>=0.5) and next_to(..., buff>=0.35).
-5. In graph scenes, keep explanatory captions ABOVE the x-axis region.
-   Avoid placing Text at y <= -2.3. Keep axis labels separate from narration text.
-6. Do NOT place narration sentences on top of axes/ticks/grid lines.
-   For graph captions use .next_to(axes, UP, buff>=0.5) or move_to(UP * value).
-7. In any scene that uses Axes(...), never use .next_to(..., DOWN) for captions.
-   Place captions to UP/RIGHT/LEFT of graph content only.
-8. Avoid .to_edge(DOWN) for narration text in graph/equation scenes.
-9. Leave the top-left area clear for character sprite overlay:
-   do not place titles, labels, bullets, or axes labels in x <= -4.2 and y >= 1.4.
-10. Avoid `.to_corner(UL)` and avoid `.to_edge(LEFT)` for large text groups.
-    Prefer centered placement or shift those groups right by at least 1.0 units.
-
-=== COLOR THEME ===
-Background is BLACK. Use high contrast:
-  TITLES: WHITE or GOLD. BODY: WHITE. PRIMARY: BLUE. SECONDARY: GREEN.
-  HIGHLIGHT: YELLOW. RESULT: GREEN_B. WARNING: RED.
-
-=== ARRAYS, BOXES & LABELED CELLS ===
-Create cells as VGroup(rect, label) — label.move_to(rect.get_center()).
-Build as VGroup of cells, then arrange once.
 
 === IMPORTANT RULES ===
 1. Import MUST be: from manim import *
@@ -747,30 +803,33 @@ Build as VGroup of cells, then arrange once.
 9. No plugins. Only manim and numpy imports.
 10. NEVER use TransformMatchingTex — use ReplacementTransform.
 11. Minimum font_size: 24. Never .scale() below 0.8 on text.
-12. Every self.play() MUST have run_time=0.9 to 2.2 seconds.
-13. Keep waits short (0.4 to 1.2 seconds) and purposeful.
-14. TEXT WIDTH SAFETY: text.set_width(min(text.width, 8.5)) on any Text.
+12. Every self.play() MUST have run_time=1.0 to 2.5 seconds.
+13. Each scene needs >= {cfg.min_play_calls} self.play() calls to fill the duration.
+14. DURATION MATCHING: Your animation MUST last at least as long as duration_hint_seconds. \
+   Add self.wait(1) to self.wait(2) pauses between logical sections to fill the time. \
+   The narration audio will play over your animation — if the animation is shorter than \
+   the audio, the video gets cut short.
+15. TEXT WIDTH SAFETY: text.set_width(min(text.width, 8.5)) on any Text.
 
 === OUTPUT FORMAT ===
 Respond with ONLY valid JSON (no markdown fences, no extra text):
 {{
-    "scenes": [
-        {{
-            "scene_index": 0,
-            "manim_code": "from manim import *\\nimport numpy as np\\n\\nclass Scene000(Scene):\\n    def construct(self):\\n        ..."
-        }}
-    ]
+    "scene_index": 0,
+    "manim_code": "from manim import *\\nimport numpy as np\\n\\nclass Scene000(MovingCameraScene):\\n    def construct(self):\\n        ..."
 }}
 
-Each scene's manim_code MUST be COMPLETE, RUNNABLE ManimCE Python code:
+The manim_code MUST be COMPLETE, RUNNABLE ManimCE Python code:
 - Start with: from manim import * and import numpy as np
-- Define ONE Scene subclass named Scene{{NNN}} (Scene000, Scene001, etc.)
+- Define ONE MovingCameraScene subclass named Scene{{NNN}} (Scene000, Scene001, etc.)
 - 25-55 lines of animation code
 - Duration must match duration_hint_seconds
 - End with FadeOut cleanup
+
+{CODE_FEWSHOT}
 """
 
-    def _build_code_user_message(self, narration_data: dict) -> str:
+    def _build_code_user_message(self, narration_data: dict, dcfg: "_DifficultyConfig | None" = None) -> str:
+        cfg = dcfg or DIFFICULTY_CONFIGS[Difficulty.BEGINNER]
         scenes = narration_data.get("scenes", [])
         title = narration_data.get("title", "Untitled")
 
@@ -802,16 +861,84 @@ REQUIREMENTS:
 1. Generate complete, runnable ManimCE code for EVERY scene
 2. MANDATORY: At least one scene MUST use Axes(...) + axes.plot(...)
 3. Include at least one scene with ReplacementTransform for equation/concept evolution
-4. At least {MIN_VISUAL_STRUCTURE_SCENES} scenes must have visual structures (graphs, diagrams, trees, tables)
-5. Each scene needs >= 4 self.play() calls with explicit run_time
-6. NEVER use MathTex or Tex — use Text() with Unicode for math
-7. End every scene with FadeOut cleanup
+4. At least {cfg.min_visual_structure_scenes} scenes must have visual structures (graphs, diagrams, trees, tables)
+5. Each scene needs >= {cfg.min_play_calls} self.play() calls with explicit run_time (1.0-2.5s each)
+6. CRITICAL: Animation duration MUST match duration_hint_seconds. Add self.wait() pauses between sections.
+7. NEVER use MathTex or Tex — use Text() with Unicode for math
+8. End every scene with FadeOut cleanup
 
 Respond with ONLY the JSON object. No markdown fences.
 """
 
-    def _validate_code(self, code_data: dict) -> list[str]:
+    def _build_single_scene_user_message(
+        self, scene_data: dict, title: str, dcfg: "_DifficultyConfig | None" = None,
+    ) -> str:
+        """Build a user message for a single scene's code generation."""
+        cfg = dcfg or DIFFICULTY_CONFIGS[Difficulty.BEGINNER]
+        idx = scene_data.get("scene_index", 0)
+        dur = scene_data.get("duration_hint_seconds", 30)
+        stype = scene_data.get("manim_scene_type", "custom")
+        narration = scene_data.get("narration_text", "")
+        visual = scene_data.get("visual_description", "")
+
+        scene_type_hint = ""
+        if stype == "graph":
+            scene_type_hint = "\nMANDATORY: This scene MUST use Axes(...) + axes.plot(...)."
+        elif stype == "equation":
+            scene_type_hint = "\nMANDATORY: This scene MUST use ReplacementTransform for step-by-step derivation."
+
+        return f"""\
+Generate ManimCE code for Scene {idx} of the video "{title}".
+
+SCENE {idx} ({dur}s, {stype}):
+Narration: "{narration}"
+Visual description: "{visual}"
+{scene_type_hint}
+REQUIREMENTS:
+1. Complete, runnable ManimCE code with class Scene{idx:03d}(MovingCameraScene)
+2. >= {cfg.min_play_calls} self.play() calls with explicit run_time (1.0-2.5s each)
+3. Animation duration MUST fill {dur} seconds. Add self.wait() pauses between sections.
+4. NEVER use MathTex or Tex — use Text() with Unicode for math
+5. End with FadeOut cleanup
+
+Respond with ONLY a JSON object: {{"scene_index": {idx}, "manim_code": "..."}}
+No markdown fences.
+"""
+
+    def _request_code(
+        self, system_prompt: str, user_message: str, max_tokens: int = 4096,
+    ) -> tuple[str, float]:
+        """Make an API call using the fast CODE_MODEL for code generation."""
+        t0 = time.perf_counter()
+        try:
+            response = self.client.messages.create(
+                model=CODE_MODEL,
+                max_tokens=max_tokens,
+                system=[
+                    {
+                        "type": "text",
+                        "text": system_prompt,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
+                messages=[{"role": "user", "content": user_message}],
+            )
+        except Exception as e:
+            logger.error("[script_gen] │  Code API call FAILED: %s", e)
+            raise
+        elapsed = time.perf_counter() - t0
+        cache_read = getattr(response.usage, "cache_read_input_tokens", 0)
+        cache_create = getattr(response.usage, "cache_creation_input_tokens", 0)
+        logger.info(
+            "[script_gen] │  Code API: %.1fs, in=%d, out=%d, cache_read=%d, cache_create=%d",
+            elapsed, response.usage.input_tokens, response.usage.output_tokens,
+            cache_read, cache_create,
+        )
+        return response.content[0].text, elapsed
+
+    def _validate_code(self, code_data: dict, dcfg: "_DifficultyConfig | None" = None) -> list[str]:
         """Validate code output from Call 2."""
+        cfg = dcfg or DIFFICULTY_CONFIGS[Difficulty.BEGINNER]
         errors: list[str] = []
         scenes = code_data.get("scenes") or []
         if not scenes:
@@ -830,8 +957,8 @@ Respond with ONLY the JSON object. No markdown fences.
                 errors.append(f"Scene {scene_num}: manim_code too short ({len(code)} chars).")
 
             play_calls = len(re.findall(r"\bself\.play\(", code))
-            if play_calls < 4:
-                errors.append(f"Scene {scene_num}: needs more animations (>= 4 self.play calls, has {play_calls}).")
+            if play_calls < cfg.min_play_calls:
+                errors.append(f"Scene {scene_num}: needs more animations (>= {cfg.min_play_calls} self.play calls, has {play_calls}).")
 
             # Detect graph and transform scenes
             if "Axes(" in code and "plot(" in code:
@@ -892,10 +1019,10 @@ Respond with ONLY the JSON object. No markdown fences.
             errors.append("Missing graph scene with Axes and plotted functions.")
         if not has_transform:
             errors.append("Missing equation/derivation scene with Transform steps.")
-        if visual_structure_count < MIN_VISUAL_STRUCTURE_SCENES:
+        if visual_structure_count < cfg.min_visual_structure_scenes:
             errors.append(
                 f"Only {visual_structure_count} scenes have visual structures. "
-                f"Need at least {MIN_VISUAL_STRUCTURE_SCENES}."
+                f"Need at least {cfg.min_visual_structure_scenes}."
             )
 
         return errors
@@ -912,7 +1039,13 @@ Respond with ONLY the JSON object. No markdown fences.
             response = self.client.messages.create(
                 model=CLAUDE_MODEL,
                 max_tokens=max_tokens,
-                system=system_prompt,
+                system=[
+                    {
+                        "type": "text",
+                        "text": system_prompt,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
                 messages=[{"role": "user", "content": user_message}],
             )
         except Exception as e:
@@ -920,10 +1053,14 @@ Respond with ONLY the JSON object. No markdown fences.
             raise
         elapsed = time.perf_counter() - t0
         logger.info("[script_gen] │  Claude API response in %.1fs", elapsed)
+        cache_read = getattr(response.usage, "cache_read_input_tokens", 0)
+        cache_create = getattr(response.usage, "cache_creation_input_tokens", 0)
         logger.info(
-            "[script_gen] │  Usage: input=%d tokens, output=%d tokens",
+            "[script_gen] │  Usage: input=%d, output=%d, cache_read=%d, cache_creation=%d",
             response.usage.input_tokens,
             response.usage.output_tokens,
+            cache_read,
+            cache_create,
         )
         logger.info("[script_gen] │  Stop reason: %s", response.stop_reason)
         return response.content[0].text, elapsed

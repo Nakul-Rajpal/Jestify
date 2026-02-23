@@ -50,9 +50,12 @@ class CharacterCompositor:
         if sprite.exists():
             sprite_size = sprite.stat().st_size / 1024
             logger.info("[compositor] │  Sprite size: %.1f KB", sprite_size)
+            # tpad=stop_mode=clone freezes the last video frame so audio can
+            # finish playing even if the animation is shorter than the narration.
             filter_complex = (
                 f"[1:v]scale=iw*{scale}:ih*{scale}[sprite];"
-                f"[0:v][sprite]overlay={overlay_pos}[vout];"
+                f"[0:v]tpad=stop_mode=clone:stop_duration=30[vpad];"
+                f"[vpad][sprite]overlay={overlay_pos}[vout];"
                 "[2:a]aresample=async=1:first_pts=0[aout]"
             )
             cmd = [
@@ -68,16 +71,22 @@ class CharacterCompositor:
                 "-movflags", "+faststart",
                 output_path,
             ]
-            logger.info("[compositor] │  Mode: sprite overlay + audio mix")
+            logger.info("[compositor] │  Mode: sprite overlay + audio mix (video padded to match audio)")
         else:
             logger.warning("[compositor] │  Sprite not found, using audio-only composite")
+            # tpad=stop_mode=clone freezes last frame so audio plays fully
+            filter_complex = (
+                "[0:v]tpad=stop_mode=clone:stop_duration=30[vpad];"
+                "[1:a]aresample=async=1:first_pts=0[aout]"
+            )
             cmd = [
                 "ffmpeg", "-y",
                 "-i", animation_clip,
                 "-i", audio_file,
-                "-filter_complex", "[1:a]aresample=async=1:first_pts=0[aout]",
-                "-map", "0:v", "-map", "[aout]",
-                "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+                "-filter_complex", filter_complex,
+                "-map", "[vpad]", "-map", "[aout]",
+                "-c:v", "libx264", "-preset", "superfast",
+                "-c:a", "aac", "-b:a", "192k",
                 "-shortest",
                 "-movflags", "+faststart",
                 output_path,

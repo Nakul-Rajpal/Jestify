@@ -396,6 +396,13 @@ class ManimRenderer:
         # ── axes.get_graph() → axes.plot() ──────────────────────────────
         source = _re.sub(r'\.get_graph\(', '.plot(', source)
 
+        # ── Change Scene → MovingCameraScene for camera-follow support ──
+        source = _re.sub(
+            r'class\s+(\w+)\s*\(\s*Scene\s*\)',
+            r'class \1(MovingCameraScene)',
+            source,
+        )
+
         # ── Remove ManimGL-specific self.camera.background_color lines ──
         # ManimCE handles background via config or Scene defaults
         source = _re.sub(
@@ -701,6 +708,73 @@ class ManimRenderer:
             r'\1label=Text("\3", font_size=28)',
             source,
         )
+
+        # ── Inject auto-frame safety (size clamp + camera auto-zoom) ─────
+        if '_fit_mob_to_frame' not in source:
+            _frame_safety = (
+                '\n# ── Auto-frame: keep content within camera bounds ──\n'
+                'import manim.scene.moving_camera_scene as _mcs_af\n'
+                '\n'
+                '_SAFE_MOB_W = 12.0\n'
+                '_SAFE_MOB_H = 6.0\n'
+                '_FRAME_DEFAULT_W = 14.2\n'
+                '_MAX_CAMERA_SCALE = 2.0\n'
+                '\n'
+                'def _fit_mob_to_frame(mob):\n'
+                '    """Scale down any mobject that exceeds safe dimensions."""\n'
+                '    try:\n'
+                '        if mob.width > _SAFE_MOB_W:\n'
+                '            mob.set(width=_SAFE_MOB_W)\n'
+                '        if mob.height > _SAFE_MOB_H:\n'
+                '            mob.set(height=_SAFE_MOB_H)\n'
+                '    except Exception:\n'
+                '        pass\n'
+                '\n'
+                '_orig_mcs_play = _mcs_af.MovingCameraScene.play\n'
+                '\n'
+                'def _auto_reframe(scene_self):\n'
+                '    """Zoom camera out if content exceeds the frame."""\n'
+                '    try:\n'
+                '        cam = scene_self.camera.frame\n'
+                '        visible = [m for m in scene_self.mobjects\n'
+                '                   if m is not cam and m.width > 0.05 and m.height > 0.05]\n'
+                '        if not visible:\n'
+                '            return\n'
+                '        group = VGroup(*visible)\n'
+                '        needed_w = group.width + 1.5\n'
+                '        needed_h = group.height + 1.5\n'
+                '        cam_w, cam_h = cam.width, cam.height\n'
+                '        scale = max(needed_w / cam_w, needed_h / cam_h)\n'
+                '        center = group.get_center()\n'
+                '        if scale > 1.1 and cam_w < _FRAME_DEFAULT_W * _MAX_CAMERA_SCALE:\n'
+                '            _orig_mcs_play(scene_self,\n'
+                '                cam.animate.scale(scale).move_to(center),\n'
+                '                run_time=0.5)\n'
+                '        elif cam_w > _FRAME_DEFAULT_W * 1.15 and scale < 0.8:\n'
+                '            _orig_mcs_play(scene_self,\n'
+                '                cam.animate.set(width=_FRAME_DEFAULT_W).move_to(ORIGIN),\n'
+                '                run_time=0.5)\n'
+                '    except Exception:\n'
+                '        pass\n'
+                '\n'
+                'def _safe_mcs_play(self, *args, **kwargs):\n'
+                '    _orig_mcs_play(self, *args, **kwargs)\n'
+                '    for _m in list(self.mobjects):\n'
+                '        _fit_mob_to_frame(_m)\n'
+                '    _auto_reframe(self)\n'
+                '\n'
+                '_mcs_af.MovingCameraScene.play = _safe_mcs_play\n'
+                '# ── end auto-frame ──\n'
+            )
+            _fr_lines = source.split('\n')
+            _fr_class_idx = None
+            for _fri, _frl in enumerate(_fr_lines):
+                if _re.match(r'^class\s+', _frl):
+                    _fr_class_idx = _fri
+                    break
+            if _fr_class_idx is not None:
+                _fr_lines.insert(_fr_class_idx, _frame_safety)
+                source = '\n'.join(_fr_lines)
 
         # ── Inject final FadeOut if construct() doesn't end with one ─────
         if 'def construct(self)' in source and 'FadeOut(m) for m in self.mobjects' not in source:

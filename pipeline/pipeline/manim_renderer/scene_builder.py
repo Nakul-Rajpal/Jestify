@@ -69,6 +69,9 @@ class SceneBuilder:
         # Enforce minimum font_size of 24 on all Text/MathTex objects
         source = self._enforce_font_floor(source)
 
+        # Fix unterminated strings before AST validation
+        source = self._fix_unterminated_strings(source)
+
         errors = self._validate_ast(source)
         if errors:
             logger.warning("[scene_builder] │  AST validation issues: %s", errors)
@@ -236,7 +239,7 @@ class SceneBuilder:
 
         return "\n".join(import_lines) + f"""
 
-class {class_name}(Scene):
+class {class_name}(MovingCameraScene):
     def construct(self):
 {indented_body}
 """
@@ -279,13 +282,110 @@ class {class_name}(Scene):
         return errors
 
     @staticmethod
+    def _fix_unterminated_strings(source: str) -> str:
+        """Fix unterminated string literals caused by newlines inside strings.
+
+        LLMs sometimes produce strings that span multiple lines without
+        triple-quoting, e.g.::
+
+            Text("Hello
+            World", font_size=36)
+
+        This joins such lines back together (replacing the embedded newline
+        with a space) so the string is valid single-line Python.
+        """
+        lines = source.split("\n")
+        fixed_lines: list[str] = []
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            stripped = line.lstrip()
+
+            # Skip comment-only and blank lines
+            if stripped.startswith("#") or not stripped:
+                fixed_lines.append(line)
+                i += 1
+                continue
+
+            # Check if this line has an unterminated string
+            in_string: str | None = None
+            escape_next = False
+            in_triple = False
+            j = 0
+            while j < len(line):
+                ch = line[j]
+                if escape_next:
+                    escape_next = False
+                    j += 1
+                    continue
+                if ch == "\\":
+                    escape_next = True
+                    j += 1
+                    continue
+                if in_string is None:
+                    if ch == "#":
+                        break  # rest is a comment
+                    if ch in ('"', "'"):
+                        if line[j:j+3] in ('"""', "'''"):
+                            in_triple = True
+                            break  # don't mess with triple-quoted strings
+                        in_string = ch
+                elif ch == in_string:
+                    in_string = None
+                j += 1
+
+            if in_string is not None and not in_triple:
+                # String was opened but not closed — join with next lines
+                # until the string closes or we run out of lines (max 3 joins)
+                joined = line
+                joins = 0
+                while in_string is not None and i + 1 < len(lines) and joins < 3:
+                    i += 1
+                    joins += 1
+                    next_line = lines[i].strip()
+                    joined = joined.rstrip() + " " + next_line
+
+                    # Re-check if the string is now closed
+                    in_string_check: str | None = None
+                    escape_next_check = False
+                    for ch in joined:
+                        if escape_next_check:
+                            escape_next_check = False
+                            continue
+                        if ch == "\\":
+                            escape_next_check = True
+                            continue
+                        if in_string_check is None:
+                            if ch == "#":
+                                break
+                            if ch in ('"', "'"):
+                                if ch * 3 in joined:
+                                    break
+                                in_string_check = ch
+                        elif ch == in_string_check:
+                            in_string_check = None
+                    in_string = in_string_check
+
+                logger.info(
+                    "[scene_builder] │  Joined %d line(s) to fix unterminated string",
+                    joins,
+                )
+                fixed_lines.append(joined)
+            else:
+                fixed_lines.append(line)
+            i += 1
+        return "\n".join(fixed_lines)
+
+    @staticmethod
     def _auto_fix_code(source: str) -> str:
-        """Apply the same transforms as renderer._patch_gl_to_ce() to fix issues early.
+        """Apply transforms to fix common LLM code issues early.
 
         This gives us a chance to salvage LLM code before falling back to templates.
         """
         from pipeline.manim_renderer.renderer import ManimRenderer
-        return ManimRenderer._patch_gl_to_ce(source)
+        source = ManimRenderer._patch_gl_to_ce(source)
+        source = SceneBuilder._fix_unterminated_strings(source)
+        return source
 
     @staticmethod
     def _extract_key_phrases(narration: str, count: int = 3) -> list[str]:
@@ -458,7 +558,7 @@ class {class_name}(Scene):
         source = f'''from manim import *
 import numpy as np
 
-class {class_name}(Scene):
+class {class_name}(MovingCameraScene):
     def construct(self):
         # TITLE at grid TITLE_POS
         title = Text("{title_escaped}", font_size=42)

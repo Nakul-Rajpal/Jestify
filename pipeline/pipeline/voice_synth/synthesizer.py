@@ -250,10 +250,42 @@ class VoiceSynthesizer:
                     errors.append(msg)
                     logger.warning("[voice] │  Fish Audio failed (%s)", msg)
 
-        detail = "; ".join(errors[:4]) if errors else "no Fish voice candidates configured"
+        # ── Fallback: edge-tts ────────────────────────────────────────── #
+        if "edge-tts" in self._local_backends:
+            logger.info("[voice] │  Fish Audio unavailable, falling back to edge-tts")
+            try:
+                self._synthesize_edge_tts(text, character_id, output_path)
+                elapsed = time.perf_counter() - t0
+                out_file = Path(output_path)
+                logger.info(
+                    "[voice] └─ OK (edge-tts): %s (%.1f KB, %.1fs)",
+                    output_path, out_file.stat().st_size / 1024, elapsed,
+                )
+                return str(out_file.resolve())
+            except Exception as exc:
+                errors.append(f"edge-tts: {exc}")
+                logger.warning("[voice] │  edge-tts failed: %s", exc)
+
+        # ── Fallback: macOS say ───────────────────────────────────────── #
+        if "macos-say" in self._local_backends:
+            logger.info("[voice] │  Falling back to macOS say")
+            try:
+                self._synthesize_macos_say(text, output_path)
+                elapsed = time.perf_counter() - t0
+                out_file = Path(output_path)
+                logger.info(
+                    "[voice] └─ OK (macos-say): %s (%.1f KB, %.1fs)",
+                    output_path, out_file.stat().st_size / 1024, elapsed,
+                )
+                return str(out_file.resolve())
+            except Exception as exc:
+                errors.append(f"macos-say: {exc}")
+                logger.warning("[voice] │  macOS say failed: %s", exc)
+
+        detail = "; ".join(errors[:4]) if errors else "no TTS backends available"
         raise RuntimeError(
-            f"Selected Fish voice failed for character '{character_key}'. "
-            f"No fallback audio is enabled. Attempts: {detail}"
+            f"All TTS backends failed for character '{character_key}'. "
+            f"Attempts: {detail}"
         )
 
     # ------------------------------------------------------------------ #
@@ -278,61 +310,61 @@ class VoiceSynthesizer:
                     voice_key: voice_id,
                     **variant,
                 }
-            req = request.Request(
-                url="https://api.fish.audio/v1/tts",
-                method="POST",
-                headers={
-                    "Authorization": f"Bearer {self._fish_api_key}",
-                    "Content-Type": "application/json",
-                },
-                data=json.dumps(payload).encode("utf-8"),
-            )
-            try:
-                with request.urlopen(
-                    req,
-                    timeout=self._fish_timeout_seconds,
-                    context=self._build_ssl_context(),
-                ) as resp:
-                    audio_bytes = resp.read()
-            except error.HTTPError as exc:
-                body = exc.read().decode("utf-8", errors="ignore")
-                errors.append(
-                    f"{voice_key}/{variant.get('format','default')} HTTP {exc.code}: {body[:140]}"
+                req = request.Request(
+                    url="https://api.fish.audio/v1/tts",
+                    method="POST",
+                    headers={
+                        "Authorization": f"Bearer {self._fish_api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    data=json.dumps(payload).encode("utf-8"),
                 )
-                continue
-            except error.URLError as exc:
-                errors.append(f"{voice_key}/{variant.get('format','default')} URL error: {exc}")
-                continue
+                try:
+                    with request.urlopen(
+                        req,
+                        timeout=self._fish_timeout_seconds,
+                        context=self._build_ssl_context(),
+                    ) as resp:
+                        audio_bytes = resp.read()
+                except error.HTTPError as exc:
+                    body = exc.read().decode("utf-8", errors="ignore")
+                    errors.append(
+                        f"{voice_key}/{variant.get('format','default')} HTTP {exc.code}: {body[:140]}"
+                    )
+                    continue
+                except error.URLError as exc:
+                    errors.append(f"{voice_key}/{variant.get('format','default')} URL error: {exc}")
+                    continue
 
-            if not audio_bytes:
-                errors.append(f"{voice_key}/{variant.get('format','default')}: empty response")
-                continue
+                if not audio_bytes:
+                    errors.append(f"{voice_key}/{variant.get('format','default')}: empty response")
+                    continue
 
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_wav:
-                tmp_wav_path = tmp_wav.name
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_wav:
+                    tmp_wav_path = tmp_wav.name
 
-            try:
-                if audio_bytes[:4] == b"RIFF":
-                    Path(tmp_wav_path).write_bytes(audio_bytes)
-                else:
-                    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp_mp3:
-                        tmp_mp3_path = tmp_mp3.name
-                        tmp_mp3.write(audio_bytes)
-                    try:
-                        self._convert_audio_to_wav(tmp_mp3_path, tmp_wav_path)
-                    finally:
-                        Path(tmp_mp3_path).unlink(missing_ok=True)
+                try:
+                    if audio_bytes[:4] == b"RIFF":
+                        Path(tmp_wav_path).write_bytes(audio_bytes)
+                    else:
+                        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp_mp3:
+                            tmp_mp3_path = tmp_mp3.name
+                            tmp_mp3.write(audio_bytes)
+                        try:
+                            self._convert_audio_to_wav(tmp_mp3_path, tmp_wav_path)
+                        finally:
+                            Path(tmp_mp3_path).unlink(missing_ok=True)
 
-                self._assert_nonempty_wav(
-                    tmp_wav_path,
-                    f"fish-audio[{voice_key}/{variant.get('format','default')}]",
-                )
-                Path(output_path).write_bytes(Path(tmp_wav_path).read_bytes())
-                return
-            except Exception as exc:
-                errors.append(f"{voice_key}/{variant.get('format','default')}: {exc}")
-            finally:
-                Path(tmp_wav_path).unlink(missing_ok=True)
+                    self._assert_nonempty_wav(
+                        tmp_wav_path,
+                        f"fish-audio[{voice_key}/{variant.get('format','default')}]",
+                    )
+                    Path(output_path).write_bytes(Path(tmp_wav_path).read_bytes())
+                    return
+                except Exception as exc:
+                    errors.append(f"{voice_key}/{variant.get('format','default')}: {exc}")
+                finally:
+                    Path(tmp_wav_path).unlink(missing_ok=True)
 
         raise RuntimeError(f"Fish Audio request failed. Attempts: {'; '.join(errors)}")
 

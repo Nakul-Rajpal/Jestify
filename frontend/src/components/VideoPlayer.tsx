@@ -74,7 +74,7 @@ export default function VideoPlayer({
         </video>
       </div>
 
-      <div className="mt-4 text-center">
+      <div className="mt-4 flex items-center justify-center gap-3">
         <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-green-500/10 border border-green-500/20">
           <svg
             className="w-4 h-4 text-green-400"
@@ -89,6 +89,26 @@ export default function VideoPlayer({
           </svg>
           <span className="text-sm text-green-400">Video generated successfully</span>
         </div>
+        <a
+          href={videoUrl}
+          download="jestify-video.mp4"
+          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-500/10 border border-blue-500/20 hover:bg-blue-500/20 transition-colors cursor-pointer"
+        >
+          <svg
+            className="w-4 h-4 text-blue-400"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" y1="15" x2="12" y2="3" />
+          </svg>
+          <span className="text-sm text-blue-400">Download</span>
+        </a>
       </div>
     </div>
   );
