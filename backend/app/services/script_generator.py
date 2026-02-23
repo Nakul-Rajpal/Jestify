@@ -771,8 +771,8 @@ at that exact moment in the animation.
 
 === LAYOUT & VISUAL RULES ===
 Frame: 14.2 x 8 units. Safe zone: x in [-6.0, 6.0], y in [-3.2, 3.2].
-Camera auto-adjusts: if content overflows the frame, the camera zooms out to fit.
-Still aim for good positioning within the safe zone — auto-zoom is a safety net.
+There is NO camera auto-zoom — you MUST keep all content within the safe zone.
+Oversized mobjects are clamped, but the camera stays fixed.
 - Title at UP*3.2, main content at DOWN*0.3, sprite safe zone: x<=-4.2, y>=1.4
 - Font sizes: headers 40-48, body 28-36, minimum 24. Use weight=BOLD for titles.
 - Max 3 text elements on screen. Use LaggedStart for lists, NEVER bulk FadeIn.
