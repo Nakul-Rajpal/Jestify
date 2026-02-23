@@ -72,6 +72,8 @@ TEXT MOBJECTS (use Text() for EVERYTHING — LaTeX is NOT available):
   Fractions: write as a/b or use ½ ⅓ ¼ for common fractions
   Text() accepts color= and font_size= as constructor args:
     Text("x² + 1 = 0", color=BLUE, font_size=36)
+  MarkupText('<b>Bold</b> and <span foreground="blue">blue</span>')
+    — rich text with bold, italic, color, underline via PangoMarkup (no LaTeX)
 
 SHAPES & GEOMETRY:
   Axes(x_range=[a,b,s], y_range=[c,d,s], x_length=7, y_length=5)
@@ -86,9 +88,42 @@ SHAPES & GEOMETRY:
   VGroup(mob1, mob2, ...)               — group mobjects together
   SurroundingRectangle(mob, color=YELLOW, buff=0.15)
   Brace(mob, direction)
+  BraceText(mob, "label", brace_direction=DOWN)  — brace with text (no LaTeX)
   DashedLine(start, end)
+  CurvedArrow(start, end)                        — curved arrow between points
+  DoubleArrow(start, end)                        — arrow with tips on both ends
   Polygon(*points), RegularPolygon(n=6)
   Arc(angle), AnnularSector(inner_radius, outer_radius, angle)
+
+TABLES (no LaTeX — uses Pango text rendering):
+  Table([["A","B"],["C","D"]],
+        row_labels=[Text("R1"), Text("R2")],
+        col_labels=[Text("C1"), Text("C2")],
+        include_outer_lines=True)
+  t.add_highlighted_cell((2,2), color=GREEN)  — highlight a cell
+  MobjectTable — same API but entries must be Mobjects
+  NEVER use MathTable (requires LaTeX).
+
+GRAPHS & TREES (built-in layout engine, no LaTeX):
+  Graph(vertices, edges, labels={...}, layout="spring")
+  Layouts: "spring", "circular", "tree", "kamada_kawai", "planar", "partite"
+  Tree example:
+    Graph([1,2,3,4,5], [(1,2),(1,3),(2,4),(2,5)],
+          labels={v: Text(str(v), font_size=20) for v in range(1,6)},
+          layout="tree", root_vertex=1)
+  DiGraph(vertices, edges, labels={...}) — directed graph with arrows
+  IMPORTANT: Always pass labels as {v: Text(...)} dict, NOT labels=True (triggers LaTeX).
+  vertex_config={"color": BLUE, "radius": 0.3} for styling.
+
+BAR CHARTS (no LaTeX with Text labels):
+  BarChart(values=[10,20,30], bar_names=["A","B","C"],
+           y_range=[0,35,5], x_length=10, y_length=5)
+  chart.change_bar_values([15,25,35])  — animate bar height changes
+  For bar labels: chart.get_bar_labels(font_size=30, label_constructor=Text)
+
+CODE DISPLAY (syntax-highlighted, no LaTeX):
+  Code(code_string='def hello():\\n    print("hi")',
+       language="python", background="window")
 
 POSITIONING:
   mob.to_edge(UP/DOWN/LEFT/RIGHT, buff=0.5)
@@ -125,6 +160,11 @@ PLAY:
   self.play(mob.animate.set_color(YELLOW))
   self.play(mob.animate.set_opacity(0.3))  — dim previous elements
   self.wait(2)
+
+  # Animated number displays (no LaTeX):
+  tracker = ValueTracker(0)
+  display = always_redraw(lambda: Text(f"Score: {tracker.get_value():.0f}", font_size=36))
+  self.play(tracker.animate.set_value(100), run_time=2)
 
 AXES METHODS (ManimCE):
   graph = axes.plot(lambda x: x**2, color=BLUE, x_range=[-3,3])
