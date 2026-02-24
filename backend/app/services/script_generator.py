@@ -36,6 +36,11 @@ ENABLE_CONTEXT7 = os.getenv("ENABLE_CONTEXT7_DOCS", "false").lower() in {"1", "t
 MAX_SOURCE_CHARS = int(os.getenv("MAX_SOURCE_CHARS", "8000"))
 FAST_CODE_MAX_TOKENS = int(os.getenv("FAST_CODE_MAX_TOKENS", "8192"))
 
+# Ollama integration — set CODE_PROVIDER=ollama to use a local manim-finetuned model
+CODE_PROVIDER = os.getenv("CODE_PROVIDER", "anthropic").lower()  # "anthropic" or "ollama"
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_CODE_MODEL = os.getenv("OLLAMA_CODE_MODEL", "maternion/manim-coder")
+
 
 class _DifficultyConfig:
     """Per-difficulty scene count and timing configuration."""
@@ -748,12 +753,20 @@ source material, go deeper (examples, applications) rather than repeating.
     def _generate_code(
         self, narration_data: dict, live_manim_docs: str, dcfg: "_DifficultyConfig | None" = None,
     ) -> tuple[dict, float]:
-        """Call 2: generate ManimCE code — parallel per-scene calls using fast model."""
+        """Call 2: generate ManimCE code. Anthropic=parallel, Ollama=sequential."""
         cfg = dcfg or DIFFICULTY_CONFIGS[Difficulty.BEGINNER]
-        sys_prompt = self._build_code_system_prompt(live_manim_docs, cfg)
         scenes = narration_data.get("scenes", [])
         title = narration_data.get("title", "Untitled")
-        logger.info("[script_gen] │  Code model: %s (parallel, %d scenes)", CODE_MODEL, len(scenes))
+
+        if CODE_PROVIDER == "ollama":
+            return self._generate_code_ollama(scenes, cfg)
+
+        # ── Anthropic path: parallel per-scene calls ──
+        sys_prompt = self._build_code_system_prompt(live_manim_docs, cfg)
+        logger.info(
+            "[script_gen] │  Code provider: anthropic, model: %s (parallel, %d scenes)",
+            CODE_MODEL, len(scenes),
+        )
         logger.info("[script_gen] │  Code system prompt: %d chars", len(sys_prompt))
 
         t0 = time.perf_counter()
@@ -799,6 +812,48 @@ source material, go deeper (examples, applications) rather than repeating.
         logger.info("[script_gen] │  All code generated in %.1fs (%d OK, %d failed)", elapsed, len(results), len(errors))
 
         # Assemble in scene order
+        ordered_scenes = [results[i] for i in sorted(results.keys())]
+        return {"scenes": ordered_scenes}, elapsed
+
+    def _generate_code_ollama(
+        self, scenes: list[dict], dcfg: "_DifficultyConfig",
+    ) -> tuple[dict, float]:
+        """Generate ManimCE code via Ollama — sequential calls with simplified prompts."""
+        logger.info(
+            "[script_gen] │  Code provider: ollama, model: %s (sequential, %d scenes)",
+            OLLAMA_CODE_MODEL, len(scenes),
+        )
+
+        t0 = time.perf_counter()
+        results: dict[int, dict] = {}
+        errors: dict[int, str] = {}
+
+        for scene_data in scenes:
+            idx = scene_data.get("scene_index", 0)
+            narration = scene_data.get("narration_text", "")
+            visual = scene_data.get("visual_description", "")
+            stype = scene_data.get("manim_scene_type", "custom")
+            dur = scene_data.get("duration_hint_seconds", 20)
+
+            try:
+                code, elapsed_one = self._request_code_ollama(
+                    idx, narration, visual, stype, dur,
+                )
+                results[idx] = {"scene_index": idx, "manim_code": code}
+                logger.info(
+                    "[script_gen] │  Scene %d code: %d chars (%.1fs)",
+                    idx, len(code), elapsed_one,
+                )
+            except Exception as e:
+                errors[idx] = str(e)
+                logger.error("[script_gen] │  Scene %d ollama FAILED: %s", idx, e)
+
+        elapsed = time.perf_counter() - t0
+        logger.info(
+            "[script_gen] │  All code generated in %.1fs (%d OK, %d failed)",
+            elapsed, len(results), len(errors),
+        )
+
         ordered_scenes = [results[i] for i in sorted(results.keys())]
         return {"scenes": ordered_scenes}, elapsed
 
@@ -1023,7 +1078,7 @@ No markdown fences.
     def _request_code(
         self, system_prompt: str, user_message: str, max_tokens: int = 4096,
     ) -> tuple[str, float]:
-        """Make an API call using the fast CODE_MODEL for code generation."""
+        """Make an API call using the fast CODE_MODEL for code generation (Anthropic only)."""
         t0 = time.perf_counter()
         try:
             response = self.client.messages.create(
@@ -1050,6 +1105,121 @@ No markdown fences.
             cache_read, cache_create,
         )
         return response.content[0].text, elapsed
+
+    # ──────────────────────────────────────────────────────────────────
+    # Ollama integration — simplified prompt for local manim-finetuned model
+    # ──────────────────────────────────────────────────────────────────
+
+    def _request_code_ollama(
+        self, scene_index: int, narration: str, visual_desc: str,
+        scene_type: str, duration: int,
+    ) -> tuple[str, float]:
+        """Call local Ollama with a short, focused prompt the model can handle."""
+        # The manim-finetuned model works best with simple, direct prompts
+        type_hint = ""
+        if scene_type == "graph":
+            type_hint = "\n- MUST use Axes() + axes.plot() for graphing. Label axes with Text()."
+        elif scene_type == "equation":
+            type_hint = "\n- MUST use ReplacementTransform to show step-by-step derivation."
+        elif scene_type == "diagram":
+            type_hint = "\n- Use shapes (Rectangle, Circle, Arrow, etc.) to build a diagram."
+
+        prompt = f"""\
+Write a complete ManimCE Python scene class called Scene{scene_index:03d} that inherits from MovingCameraScene.
+
+The animation should visualize: {visual_desc}
+
+Rules:
+- Start with: from manim import *
+- import numpy as np
+- Use Text() for all text (never MathTex or Tex). Use Unicode for math symbols.
+- Use Create() not ShowCreation(). Use axes.plot() not get_graph().
+- Keep content within safe zone: x in [-6,6], y in [-3.2,3.2]
+- Minimum font_size=24. Use weight=BOLD for titles.
+- Every self.play() must have run_time=1.0 to 2.5
+- Total animation should last ~{duration} seconds. Use self.wait() to fill time.
+- End with self.wait(2). Do NOT FadeOut at the end.
+- FadeOut old text before writing new text in the same area.{type_hint}
+
+Write ONLY the Python code, nothing else."""
+
+        t0 = time.perf_counter()
+        logger.info(
+            "[script_gen] │  Ollama request: scene=%d, model=%s",
+            scene_index, OLLAMA_CODE_MODEL,
+        )
+        try:
+            resp = httpx.post(
+                f"{OLLAMA_BASE_URL}/api/chat",
+                json={
+                    "model": OLLAMA_CODE_MODEL,
+                    "messages": [
+                        {"role": "system", "content": "You are a ManimCE animation expert. Write complete, runnable Python code. Output ONLY code, no explanations."},
+                        {"role": "user", "content": prompt},
+                    ],
+                    "stream": False,
+                    "options": {
+                        "num_predict": max(2048, int(FAST_CODE_MAX_TOKENS / 2)),
+                        "temperature": 0.3,
+                        "top_p": 0.8,
+                        "top_k": 40,
+                        "repeat_penalty": 1.1,
+                    },
+                },
+                timeout=httpx.Timeout(300.0, connect=10.0),
+            )
+            resp.raise_for_status()
+        except Exception as e:
+            logger.error("[script_gen] │  Ollama API call FAILED: %s", e)
+            raise
+        elapsed = time.perf_counter() - t0
+        data = resp.json()
+        text = data.get("message", {}).get("content", "")
+        eval_count = data.get("eval_count", 0)
+        prompt_count = data.get("prompt_eval_count", 0)
+        logger.info(
+            "[script_gen] │  Ollama API: %.1fs, prompt_tokens=%d, eval_tokens=%d",
+            elapsed, prompt_count, eval_count,
+        )
+
+        # Extract Python code from response — model may wrap in markdown fences
+        code = self._extract_code_from_ollama_response(text, scene_index)
+        return code, elapsed
+
+    @staticmethod
+    def _extract_code_from_ollama_response(text: str, scene_index: int) -> str:
+        """Extract clean Python code from Ollama response, handling markdown fences."""
+        # Try to extract from ```python ... ``` blocks
+        fence_match = re.search(r'```(?:python)?\s*\n(.*?)```', text, re.DOTALL)
+        if fence_match:
+            code = fence_match.group(1).strip()
+        else:
+            # No fences — use the raw text, strip any leading prose
+            lines = text.strip().split('\n')
+            code_start = 0
+            for i, line in enumerate(lines):
+                if line.strip().startswith(('from manim', 'import ', 'class Scene')):
+                    code_start = i
+                    break
+            code = '\n'.join(lines[code_start:]).strip()
+
+        # Validate it looks like Python code
+        if 'from manim' not in code and 'class Scene' not in code:
+            raise ValueError(
+                f"Ollama response for scene {scene_index} did not contain valid Manim code. "
+                f"Response starts with: {text[:200]}"
+            )
+
+        # Ensure it has the right class name
+        if f'class Scene{scene_index:03d}' not in code:
+            code = re.sub(
+                r'class\s+Scene\w*\s*\(',
+                f'class Scene{scene_index:03d}(',
+                code,
+                count=1,
+            )
+
+        return code
 
     def _validate_code(self, code_data: dict, dcfg: "_DifficultyConfig | None" = None) -> list[str]:
         """Validate code output from Call 2."""
