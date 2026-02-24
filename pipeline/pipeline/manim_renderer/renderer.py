@@ -320,6 +320,51 @@ class ManimRenderer:
                 1,
             )
 
+        # ── Define color aliases for LLM-generated code ──────────────────
+        # These ensure common color names work across ManimCE v0.18–v0.20.
+        _missing_colors = (
+            '\n# ── Color aliases (compat across ManimCE v0.18–v0.20) ──\n'
+            'CYAN = TEAL_C\n'
+            'MAROON = MAROON_C\n'
+            'TEAL = TEAL_C\n'
+            'MAGENTA = "#FF00FF"\n'
+            'LIME = "#00FF00"\n'
+            'BROWN = "#8B4513"\n'
+            'OLIVE = "#808000"\n'
+            'NAVY = "#000080"\n'
+            'INDIGO = "#4B0082"\n'
+            'VIOLET = PURPLE_A\n'
+            'LIGHT_GRAY = GREY_A\n'
+            'DARK_GRAY = GREY_D\n'
+            '# v0.20 adds PURE_CYAN/PURE_MAGENTA/PURE_YELLOW as builtins;\n'
+            '# define fallbacks for older versions\n'
+            'try:\n'
+            '    PURE_CYAN\n'
+            'except NameError:\n'
+            '    PURE_CYAN = "#00FFFF"\n'
+            'try:\n'
+            '    PURE_MAGENTA\n'
+            'except NameError:\n'
+            '    PURE_MAGENTA = "#FF00FF"\n'
+            'try:\n'
+            '    PURE_YELLOW\n'
+            'except NameError:\n'
+            '    PURE_YELLOW = "#FFFF00"\n'
+            '# ── end color aliases ──\n'
+        )
+        if "import numpy" in source:
+            source = source.replace(
+                "import numpy as np",
+                "import numpy as np" + _missing_colors,
+                1,
+            )
+
+        # ── Strip unsupported kwargs from Text/SVG constructors ───────────
+        # manim 0.18.0 Text() does not accept italic, style, bold as kwargs
+        source = _re.sub(r',\s*italic\s*=\s*(?:True|False)', '', source)
+        source = _re.sub(r',\s*bold\s*=\s*(?:True|False)', '', source)
+        source = _re.sub(r',\s*style\s*=\s*["\'][^"\']*["\']', '', source)
+
         # ── Nuclear MathTex/Tex → Text monkey-patch ─────────────────────
         # ManimCE internally creates MathTex in dozens of methods (axis
         # labels, graph labels, number lines, etc.).  Patching module
@@ -331,6 +376,9 @@ class ManimRenderer:
         # calls __new__, which now returns a Text object.  Since the
         # returned object is not a MathTex instance, Python skips __init__
         # entirely — no LaTeX compilation ever runs.
+        #
+        # Tested with ManimCE v0.18–v0.20 (MathTex rewrite in v0.20 still
+        # uses the same class path: manim.mobject.text.tex_mobject).
         if "_tex_shim_new" not in source:
             _shim = (
                 '\n# ── MathTex/Tex → Text shim (LaTeX not available) ──\n'
@@ -737,13 +785,139 @@ class ManimRenderer:
                 _fr_lines.insert(_fr_class_idx, _frame_safety)
                 source = '\n'.join(_fr_lines)
 
-        # ── Inject final FadeOut if construct() doesn't end with one ─────
-        if 'def construct(self)' in source and 'FadeOut(m) for m in self.mobjects' not in source:
+        # ── Inject overlap manager: auto-FadeOut old text when new text arrives ──
+        # Monkey-patches self.play() inside construct() so that whenever a new
+        # Text or VGroup is being Written/FadedIn, any existing on-screen text
+        # whose bounding box overlaps the new one is automatically faded out first.
+        if '_overlap_managed_play' not in source:
+            _overlap_mgr = (
+                '\n# ── Overlap manager: auto-fade overlapping text ──\n'
+                'def _bboxes_overlap(a, b, margin=0.3):\n'
+                '    """Check if two mobjects bounding boxes overlap (with margin)."""\n'
+                '    try:\n'
+                '        a_l, a_r = a.get_left()[0] - margin, a.get_right()[0] + margin\n'
+                '        a_b, a_t = a.get_bottom()[1] - margin, a.get_top()[1] + margin\n'
+                '        b_l, b_r = b.get_left()[0] - margin, b.get_right()[0] + margin\n'
+                '        b_b, b_t = b.get_bottom()[1] - margin, b.get_top()[1] + margin\n'
+                '        return a_l < b_r and a_r > b_l and a_b < b_t and a_t > b_b\n'
+                '    except Exception:\n'
+                '        return False\n'
+                '\n'
+                'def _is_text_like(mob):\n'
+                '    """Check if a mobject is text-like (Text or VGroup of Text)."""\n'
+                '    if isinstance(mob, Text):\n'
+                '        return True\n'
+                '    if isinstance(mob, VGroup) and len(mob) > 0:\n'
+                '        return any(isinstance(sub, Text) for sub in mob)\n'
+                '    return False\n'
+                '\n'
+                'def _install_overlap_manager(scene):\n'
+                '    """Monkey-patch scene.play() to auto-fade overlapping text."""\n'
+                '    _original_play = scene.play\n'
+                '    _tracked = set()  # mobjects currently on screen\n'
+                '\n'
+                '    def _overlap_managed_play(*anims, **kw):\n'
+                '        # Collect new text mobjects being introduced\n'
+                '        incoming = []\n'
+                '        for anim in anims:\n'
+                '            mob = getattr(anim, "mobject", None)\n'
+                '            if mob is None:\n'
+                '                continue\n'
+                '            if _is_text_like(mob):\n'
+                '                anim_name = type(anim).__name__\n'
+                '                # Only trigger on additive animations\n'
+                '                if anim_name in ("Write", "FadeIn", "Create", "DrawBorderThenFill",\n'
+                '                                  "GrowFromCenter", "SpinInFromNothing"):\n'
+                '                    incoming.append(mob)\n'
+                '\n'
+                '        # Find overlapping old text to fade out\n'
+                '        fade_out_anims = []\n'
+                '        to_remove = set()\n'
+                '        for new_mob in incoming:\n'
+                '            for old_mob in list(_tracked):\n'
+                '                if old_mob is new_mob:\n'
+                '                    continue\n'
+                '                try:\n'
+                '                    if not old_mob.get_parent():\n'
+                '                        to_remove.add(id(old_mob))\n'
+                '                        continue\n'
+                '                except Exception:\n'
+                '                    pass\n'
+                '                if _is_text_like(old_mob) and _bboxes_overlap(old_mob, new_mob):\n'
+                '                    fade_out_anims.append(FadeOut(old_mob, run_time=0.4))\n'
+                '                    to_remove.add(id(old_mob))\n'
+                '\n'
+                '        # Clean up stale references\n'
+                '        _tracked.difference_update({m for m in _tracked if id(m) in to_remove})\n'
+                '\n'
+                '        # Play fade-outs first, then the original animations\n'
+                '        if fade_out_anims:\n'
+                '            try:\n'
+                '                _original_play(*fade_out_anims)\n'
+                '            except Exception:\n'
+                '                pass\n'
+                '\n'
+                '        _original_play(*anims, **kw)\n'
+                '\n'
+                '        # Track newly added text\n'
+                '        for mob in incoming:\n'
+                '            _tracked.add(mob)\n'
+                '\n'
+                '        # Track FadeOut removals\n'
+                '        for anim in anims:\n'
+                '            if type(anim).__name__ == "FadeOut":\n'
+                '                mob = getattr(anim, "mobject", None)\n'
+                '                _tracked.discard(mob)\n'
+                '\n'
+                '    scene.play = _overlap_managed_play\n'
+                '# ── end overlap manager ──\n'
+            )
+            # Insert before class definition
+            _om_lines = source.split('\n')
+            _om_class_idx = None
+            for _omi, _oml in enumerate(_om_lines):
+                if _re.match(r'^class\s+', _oml):
+                    _om_class_idx = _omi
+                    break
+            if _om_class_idx is not None:
+                _om_lines.insert(_om_class_idx, _overlap_mgr)
+                source = '\n'.join(_om_lines)
+
+            # Inject _install_overlap_manager(self) call at the top of construct()
+            source = _re.sub(
+                r'(def construct\(self\)\s*:\s*\n)',
+                r'\1        _install_overlap_manager(self)\n',
+                source,
+                count=1,
+            )
+
+        # ── Strip trailing FadeOut calls so the last frame keeps content visible.
+        #    The compositor's tpad=stop_mode=clone will hold this frame until
+        #    the narration audio finishes, preventing black screen gaps. ──
+        lines = source.split('\n')
+        while lines:
+            stripped = lines[-1].strip()
+            if not stripped:
+                lines.pop()
+                continue
+            if 'FadeOut' in stripped and 'self.play' in stripped:
+                lines.pop()
+                continue
+            if _re.match(r'^self\.wait\(\s*[\d.]+\s*\)$', stripped):
+                # Remove ANY trailing wait (not just wait(1)) to keep stripping
+                lines.pop()
+                continue
+            if stripped.startswith('#'):
+                # Remove trailing comments (e.g. "# Cleanup")
+                lines.pop()
+                continue
+            break
+        source = '\n'.join(lines)
+
+        # Ensure the scene ends with a wait so the last frame holds
+        if 'def construct(self)' in source:
             source = source.rstrip()
             indent = "        "
-            source += (
-                f"\n{indent}self.play(*[FadeOut(m) for m in self.mobjects], run_time=1.5)"
-                f"\n{indent}self.wait(1)\n"
-            )
+            source += f"\n{indent}self.wait(2)\n"
 
         return source

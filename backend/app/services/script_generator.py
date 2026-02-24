@@ -117,8 +117,8 @@ DIFFICULTY_INSTRUCTIONS: dict[Difficulty, str] = {
 # Built-in ManimCE reference so the LLM always has a baseline even if
 # Context7 is unavailable.
 MANIMCE_REFERENCE = r"""
-MANIM COMMUNITY EDITION (ManimCE) — QUICK API REFERENCE
-========================================================
+MANIM COMMUNITY EDITION (ManimCE v0.19–v0.20) — QUICK API REFERENCE
+====================================================================
 You write complete ManimCE Python code. Import: from manim import *
 
 TEXT MOBJECTS (use Text() for EVERYTHING — LaTeX is NOT available):
@@ -147,7 +147,7 @@ SHAPES & GEOMETRY:
   Circle(radius=1.0), Square(side_length=1.0), Rectangle(width, height)
   RoundedRectangle(corner_radius=0.15, width=4, height=2)
   VGroup(mob1, mob2, ...)               — group mobjects together
-  SurroundingRectangle(mob, color=YELLOW, buff=0.15)
+  SurroundingRectangle(mob, color=YELLOW, buff=0.15)  # v0.19+: accepts multiple mobs
   Brace(mob, direction)
   BraceText(mob, "label", brace_direction=DOWN)  — brace with text (no LaTeX)
   DashedLine(start, end)
@@ -201,7 +201,7 @@ BAR CHARTS (no LaTeX with Text labels):
 
 CODE DISPLAY (syntax-highlighted, no LaTeX):
   Code(code_string='def hello():\\n    print("hi")',
-       language="python", background="window")
+       language="python", background="rectangle")  # v0.19+: default is "rectangle"
 
 POSITIONING:
   mob.to_edge(UP/DOWN/LEFT/RIGHT, buff=0.5)
@@ -269,6 +269,7 @@ COLORS:
   YELLOW, YELLOW_A-E, GOLD, GOLD_A-E, TEAL, TEAL_A-E,
   PURPLE, PURPLE_A-E, MAROON, MAROON_A-E, ORANGE, PINK,
   GREY, GREY_A-D, WHITE, BLACK, GREY_BROWN
+  v0.20: PURE_CYAN, PURE_MAGENTA, PURE_YELLOW (full-saturation primaries)
 
 SCENE CLASS:
   class MyScene(Scene):
@@ -532,15 +533,27 @@ The audience should FEEL like {personality.display_name} is personally teaching 
    understand X, let's look at Y" or "Building on that idea..." No dead air, \
    no abrupt topic switches, no repeated introductions.
 
-3. NARRATION LENGTH: Each scene's narration_text MUST be {dcfg.min_words_per_scene}-{dcfg.max_words_per_scene} words \
+3. NO REPETITION (CRITICAL): Each scene MUST cover NEW content. Never repeat \
+   concepts, examples, or explanations from earlier scenes. If Scene 1 explains \
+   what a derivative is, Scene 2 must move FORWARD (e.g., the power rule), not \
+   re-explain derivatives. Before writing each scene, mentally check: "Did I \
+   already cover this?" If yes, skip it and teach the NEXT concept.
+
+4. PROGRESSIVE COVERAGE: Work through the source material IN ORDER. \
+   Scene 0 introduces the topic, then each subsequent scene covers the next \
+   logical concept from the source material. By the final scene, you should \
+   have covered all the key ideas. Think of it as a lecture outline — each \
+   scene is the next section, not a remix of the same section.
+
+5. NARRATION LENGTH: Each scene's narration_text MUST be {dcfg.min_words_per_scene}-{dcfg.max_words_per_scene} words \
    (this controls video duration via text-to-speech — longer narration = longer scene). \
    Count your words carefully. Do NOT go under {dcfg.min_words_per_scene} words per scene.
 
-4. CHARACTER VOICE: The narration must sound like the character is personally \
+6. CHARACTER VOICE: The narration must sound like the character is personally \
    explaining the topic. NOT a generic textbook. Use catchphrases, tone, and \
    personality consistently throughout ALL scenes.
 
-5. VISUAL DESCRIPTIONS: For each scene, write a visual_description field that \
+7. VISUAL DESCRIPTIONS: For each scene, write a visual_description field that \
    describes what SHOULD appear on screen. Be specific about what kind of \
    animation or diagram would best illustrate the narration. Examples:
    - "Show a graph of f(x) = x² with a tangent line sliding along the curve"
@@ -609,6 +622,10 @@ This directly controls video length via text-to-speech. Short narration = short 
 7. Last scene must be a summary/recap
 8. visual_description must be specific enough for an animation generator
 9. Stay in character throughout — this should sound like a real person teaching
+10. CRITICAL — NO REPETITION: Each scene MUST teach NEW content. Cover the source material \
+progressively — Scene 0 introduces, each next scene advances to the next concept. \
+NEVER re-explain something already covered in a previous scene. If you run out of \
+source material, go deeper (examples, applications) rather than repeating.
 """
         if user_prompt:
             message += f"\nAdditional instructions: {user_prompt}\n"
@@ -649,6 +666,50 @@ This directly controls video length via text-to-speech. Short narration = short 
                         f"Scene 1 narration must open with an analogy from the character's "
                         f"domain ({personality.analogy_domain}). Use a hook that connects "
                         f"the topic to {personality.display_name}'s world."
+                    )
+
+        # ── Content repetition check ──
+        # Extract significant phrases (4+ word n-grams) from each scene and
+        # flag if two non-adjacent scenes share too many of them.
+        _stop_words = {
+            "the", "a", "an", "is", "are", "was", "were", "be", "been",
+            "being", "have", "has", "had", "do", "does", "did", "will",
+            "would", "could", "should", "may", "might", "can", "shall",
+            "to", "of", "in", "for", "on", "with", "at", "by", "from",
+            "as", "into", "through", "during", "before", "after", "and",
+            "but", "or", "nor", "not", "so", "yet", "both", "either",
+            "neither", "each", "every", "all", "any", "this", "that",
+            "these", "those", "it", "its", "we", "you", "they", "them",
+            "our", "your", "their", "he", "she", "his", "her", "i", "me",
+            "my", "us", "about", "up", "out", "just", "like", "know",
+            "now", "let", "look", "see", "think", "get", "make", "go",
+            "here", "there", "when", "how", "what", "which", "who",
+            "where", "why", "than", "then", "also", "very", "more",
+            "some", "one", "two", "new", "way", "well", "right",
+        }
+
+        def _extract_content_words(text: str) -> set[str]:
+            """Extract meaningful content words from narration text."""
+            words = re.findall(r'[a-z]+', text.lower())
+            return {w for w in words if w not in _stop_words and len(w) > 3}
+
+        scene_words = []
+        for scene in scenes:
+            narration = (scene.get("narration_text") or "").strip()
+            scene_words.append(_extract_content_words(narration))
+
+        for i in range(len(scene_words)):
+            for j in range(i + 2, len(scene_words)):  # skip adjacent (natural overlap)
+                if not scene_words[i] or not scene_words[j]:
+                    continue
+                overlap = scene_words[i] & scene_words[j]
+                smaller = min(len(scene_words[i]), len(scene_words[j]))
+                if smaller > 0 and len(overlap) / smaller > 0.5:
+                    errors.append(
+                        f"Scenes {i} and {j} share too much content "
+                        f"({len(overlap)} overlapping words: "
+                        f"{', '.join(sorted(overlap)[:5])}...). "
+                        f"Each scene must teach NEW concepts — no repetition."
                     )
 
         total_duration = sum(
@@ -699,9 +760,16 @@ This directly controls video length via text-to-speech. Short narration = short 
         results: dict[int, dict] = {}
         errors: dict[int, str] = {}
 
+        # Build a lookup for adjacent scene context
+        scene_by_idx = {s.get("scene_index", i): s for i, s in enumerate(scenes)}
+
         def _gen_one(scene_data: dict) -> tuple[int, dict]:
             idx = scene_data.get("scene_index", 0)
-            user_msg = self._build_single_scene_user_message(scene_data, title, cfg)
+            prev_scene = scene_by_idx.get(idx - 1)
+            next_scene = scene_by_idx.get(idx + 1)
+            user_msg = self._build_single_scene_user_message(
+                scene_data, title, cfg, prev_scene=prev_scene, next_scene=next_scene,
+            )
             resp_text, _ = self._request_code(sys_prompt, user_msg, max_tokens=4096)
             parsed = self._parse_response(resp_text)
             # Handle both {"scene_index":0,"manim_code":"..."} and {"scenes":[...]}
@@ -775,18 +843,37 @@ There is NO camera auto-zoom — you MUST keep all content within the safe zone.
 Oversized mobjects are clamped, but the camera stays fixed.
 - Title at UP*3.2, main content at DOWN*0.3, sprite safe zone: x<=-4.2, y>=1.4
 - Font sizes: headers 40-48, body 28-36, minimum 24. Use weight=BOLD for titles.
-- Max 3 text elements on screen. Use LaggedStart for lists, NEVER bulk FadeIn.
-- Dim old content: self.play(prev.animate.set_opacity(0.3))
+- Max 2 text elements on screen at any time. Use LaggedStart for lists, NEVER bulk FadeIn.
 - Use visual structures (graphs, diagrams, tables) NOT text walls.
 - Colors on BLACK: TITLES=WHITE/GOLD, PRIMARY=BLUE, SECONDARY=GREEN, HIGHLIGHT=YELLOW.
 
+=== TEXT OVERLAP PREVENTION (CRITICAL — READ CAREFULLY) ===
+Text overlapping is the #1 visual quality issue. You MUST follow these rules:
+1. BEFORE adding any new Text(), ALWAYS FadeOut the previous text in that region.
+   WRONG: self.play(Write(text_a)) ... self.play(Write(text_b))  # text_b lands on text_a!
+   RIGHT: self.play(Write(text_a)) ... self.play(FadeOut(text_a)) ... self.play(Write(text_b))
+2. Use ReplacementTransform to swap text in-place (old becomes new, no overlap):
+   self.play(ReplacementTransform(old_text, new_text), run_time=1.2)
+3. If you MUST keep old content visible while adding new content, position them in \
+   SEPARATE non-overlapping regions (e.g., old at UP*1.5, new at DOWN*1.0).
+4. For graph scenes: place labels ONLY with .next_to() relative to the graph element. \
+   NEVER place free-floating Text near a graph — it WILL overlap axes/labels.
+5. When transitioning between content sections, do a section cleanup first:
+   self.play(*[FadeOut(m) for m in self.mobjects if m is not title], run_time=0.8)
+6. NEVER have more than 1 descriptive text + 1 title visible simultaneously. \
+   If you need to show a new explanation, FadeOut the old one first.
+7. For progressive reveals (bullet points), use VGroup.arrange(DOWN) so items \
+   stack vertically with automatic spacing — NEVER position them manually at the \
+   same coordinates.
+
 === SCENE LIFECYCLE (MANDATORY) ===
 1. Title first: title.move_to(UP * 3.2)
-2. Build content below title
-3. FadeOut old content before new sections
-4. LAST two lines MUST be:
-     self.play(*[FadeOut(m) for m in self.mobjects], run_time=1.5)
-     self.wait(1)
+2. Build content below title — keep a SINGLE content region, clear it between sections
+3. BETWEEN SECTIONS: FadeOut ALL old content (except title) before adding new content:
+     self.play(*[FadeOut(m) for m in self.mobjects if m is not title], run_time=0.8)
+4. KEEP FINAL CONTENT VISIBLE: Do NOT FadeOut at the end of the scene. \
+   Leave your last visual content on screen. The rendering system handles transitions \
+   automatically. End with self.wait(2) so the final frame holds.
 
 === IMPORTANT RULES ===
 1. Import MUST be: from manim import *
@@ -810,6 +897,10 @@ Oversized mobjects are clamped, but the camera stays fixed.
    The narration audio will play over your animation — if the animation is shorter than \
    the audio, the video gets cut short.
 15. TEXT WIDTH SAFETY: text.set_width(min(text.width, 8.5)) on any Text.
+16. TEXT OVERLAP PREVENTION: ALWAYS FadeOut old text before Writing new text in the same region. \
+   Use ReplacementTransform to swap text in-place. Never let two Text objects occupy the same area.
+17. SECTION TRANSITIONS: Between logical sections, clear old content with: \
+   self.play(*[FadeOut(m) for m in self.mobjects if m is not title], run_time=0.8)
 
 === OUTPUT FORMAT ===
 Respond with ONLY valid JSON (no markdown fences, no extra text):
@@ -823,7 +914,7 @@ The manim_code MUST be COMPLETE, RUNNABLE ManimCE Python code:
 - Define ONE MovingCameraScene subclass named Scene{{NNN}} (Scene000, Scene001, etc.)
 - 25-55 lines of animation code
 - Duration must match duration_hint_seconds
-- End with FadeOut cleanup
+- KEEP final content visible — do NOT FadeOut at the end. End with self.wait(2)
 
 {CODE_FEWSHOT}
 """
@@ -865,13 +956,14 @@ REQUIREMENTS:
 5. Each scene needs >= {cfg.min_play_calls} self.play() calls with explicit run_time (1.0-2.5s each)
 6. CRITICAL: Animation duration MUST match duration_hint_seconds. Add self.wait() pauses between sections.
 7. NEVER use MathTex or Tex — use Text() with Unicode for math
-8. End every scene with FadeOut cleanup
+8. KEEP final content visible at the end — do NOT FadeOut. End with self.wait(2)
 
 Respond with ONLY the JSON object. No markdown fences.
 """
 
     def _build_single_scene_user_message(
         self, scene_data: dict, title: str, dcfg: "_DifficultyConfig | None" = None,
+        prev_scene: dict | None = None, next_scene: dict | None = None,
     ) -> str:
         """Build a user message for a single scene's code generation."""
         cfg = dcfg or DIFFICULTY_CONFIGS[Difficulty.BEGINNER]
@@ -887,19 +979,42 @@ Respond with ONLY the JSON object. No markdown fences.
         elif stype == "equation":
             scene_type_hint = "\nMANDATORY: This scene MUST use ReplacementTransform for step-by-step derivation."
 
+        # Provide adjacent scene context so code gen knows what comes before/after
+        context_block = ""
+        if prev_scene or next_scene:
+            context_block = "\nCONTEXT (for visual continuity — do NOT duplicate content):"
+            if prev_scene:
+                prev_narr = (prev_scene.get("narration_text") or "")[:120]
+                prev_type = prev_scene.get("manim_scene_type", "custom")
+                context_block += (
+                    f"\n  PREVIOUS Scene {prev_scene.get('scene_index', '?')} ({prev_type}): "
+                    f"\"{prev_narr}...\""
+                )
+            if next_scene:
+                next_narr = (next_scene.get("narration_text") or "")[:120]
+                next_type = next_scene.get("manim_scene_type", "custom")
+                context_block += (
+                    f"\n  NEXT Scene {next_scene.get('scene_index', '?')} ({next_type}): "
+                    f"\"{next_narr}...\""
+                )
+            context_block += (
+                "\n  Your scene must cover ONLY what its narration says — "
+                "do NOT repeat visuals or content from adjacent scenes."
+            )
+
         return f"""\
 Generate ManimCE code for Scene {idx} of the video "{title}".
 
 SCENE {idx} ({dur}s, {stype}):
 Narration: "{narration}"
 Visual description: "{visual}"
-{scene_type_hint}
+{scene_type_hint}{context_block}
 REQUIREMENTS:
 1. Complete, runnable ManimCE code with class Scene{idx:03d}(MovingCameraScene)
 2. >= {cfg.min_play_calls} self.play() calls with explicit run_time (1.0-2.5s each)
 3. Animation duration MUST fill {dur} seconds. Add self.wait() pauses between sections.
 4. NEVER use MathTex or Tex — use Text() with Unicode for math
-5. End with FadeOut cleanup
+5. KEEP final content visible — do NOT FadeOut at the end. End with self.wait(2)
 
 Respond with ONLY a JSON object: {{"scene_index": {idx}, "manim_code": "..."}}
 No markdown fences.
@@ -994,10 +1109,6 @@ No markdown fences.
                 errors.append(f"Scene {scene_num}: imports a manim plugin — only manim and numpy allowed.")
             if re.search(r'lambda\s+\w\s*:\s*[^,\n]*/\s*\w(?!\s*if)', code):
                 errors.append(f"Scene {scene_num}: unguarded division in lambda — guard with abs(x) > 0.01.")
-
-            # Missing cleanup
-            if "FadeOut(m) for m in self.mobjects" not in code:
-                errors.append(f"Scene {scene_num}: missing final FadeOut cleanup.")
 
             # Text density check
             text_creates = len(re.findall(r'\b(?:Text|MathTex|Tex)\s*\(', code))
