@@ -1,5 +1,7 @@
 .PHONY: dev dev-frontend dev-backend dev-worker setup-frontend setup-backend setup-pipeline docker-up docker-down
 
+PYTHON ?= python3.13
+
 # Start all services via Docker
 docker-up:
 	docker compose up -d
@@ -12,23 +14,23 @@ dev-frontend:
 	cd frontend && npm run dev
 
 dev-backend:
-	cd backend && uvicorn app.main:app --reload --port 8000
+	cd backend && $(PYTHON) -m uvicorn app.main:app --reload --port 8000
 
 dev-worker:
 	$(eval TEXMF_WEB2C := $(shell kpsewhich texmf.cnf 2>/dev/null | xargs dirname 2>/dev/null))
 	export TEXMFCNF="$(TEXMF_WEB2C):"; \
 	export TEXMFDIST="$(shell dirname $(TEXMF_WEB2C) 2>/dev/null)"; \
-	PYTHONPATH=pipeline:. celery -A pipeline.worker worker -Q video_pipeline -c 1 --loglevel=info
+	PYTHONPATH=pipeline:. $(PYTHON) -m celery -A pipeline.worker worker -Q video_pipeline -c 1 --loglevel=info
 
 # Setup
 setup-frontend:
 	cd frontend && npm install
 
 setup-backend:
-	cd backend && pip install -r requirements.txt
+	cd backend && $(PYTHON) -m pip install -r requirements.txt
 
 setup-pipeline:
-	cd pipeline && pip install -r requirements.txt
+	cd pipeline && $(PYTHON) -m pip install -r requirements.txt
 
 setup: setup-frontend setup-backend setup-pipeline
 

@@ -122,11 +122,32 @@ RULES:
 - For math subjects, use standard course names: "Calculus 1", "Calculus 2", "Calculus 3", "Linear Algebra", "Differential Equations", "Discrete Mathematics", "Statistics", "Probability", "Real Analysis", "Abstract Algebra", etc.
 - Keep names concise and canonical
 """
+        # Split into system prompt (cacheable) and user message
+        system_prompt = (
+            "You are an expert academic classifier. Given educational video content, "
+            "classify it into a subject and topic. Respond with ONLY valid JSON."
+        )
         try:
             response = self.client.messages.create(
                 model=CLAUDE_MODEL,
                 max_tokens=500,
+                system=[
+                    {
+                        "type": "text",
+                        "text": system_prompt,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
                 messages=[{"role": "user", "content": prompt}],
+            )
+            cache_read = getattr(response.usage, "cache_read_input_tokens", 0)
+            cache_create = getattr(response.usage, "cache_creation_input_tokens", 0)
+            logger.info(
+                "Classification usage: input=%d, output=%d, cache_read=%d, cache_creation=%d",
+                response.usage.input_tokens,
+                response.usage.output_tokens,
+                cache_read,
+                cache_create,
             )
             text = response.content[0].text.strip()
 
@@ -242,10 +263,22 @@ If it should come before all existing topics, use a number lower than the lowest
 If after all, use a number higher than the highest.
 If between two topics, use a number between them.
 """
+        sort_system = (
+            "You are an expert in academic curriculum ordering. "
+            "Given existing topics and a new topic, determine the correct "
+            "pedagogical sort order. Respond with ONLY valid JSON."
+        )
         try:
             response = self.client.messages.create(
                 model=CLAUDE_MODEL,
                 max_tokens=100,
+                system=[
+                    {
+                        "type": "text",
+                        "text": sort_system,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
                 messages=[{"role": "user", "content": prompt}],
             )
             text = response.content[0].text.strip()
