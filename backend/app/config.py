@@ -32,6 +32,12 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
+# Railway injects DATABASE_URL as postgres:// or postgresql:// but asyncpg needs postgresql+asyncpg://
+for _prefix in ("postgres://", "postgresql://"):
+    if settings.DATABASE_URL.startswith(_prefix):
+        settings.DATABASE_URL = "postgresql+asyncpg://" + settings.DATABASE_URL[len(_prefix):]
+        break
+
 # Normalize STORAGE_PATH so relative values in .env are project-root relative.
 _storage_path = Path(settings.STORAGE_PATH)
 if not _storage_path.is_absolute():

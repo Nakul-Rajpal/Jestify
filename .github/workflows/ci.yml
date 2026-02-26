@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, finetuning-model]
   pull_request:
-    branches: [main]
+    branches: [main, finetuning-model]
 
 jobs:
   # ── Frontend: type-check + production build ───────────────────────────────

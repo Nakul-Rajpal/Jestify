@@ -30,7 +30,9 @@ WORKDIR /app/backend
 # PYTHONPATH=/app makes 'shared' importable (sys.path insert in main.py also does this)
 ENV PYTHONPATH=/app
 ENV STORAGE_PATH=/app/storage
+# Force unbuffered output so logs are visible in Railway
+ENV PYTHONUNBUFFERED=1
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
