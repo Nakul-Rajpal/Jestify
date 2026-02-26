@@ -24,7 +24,15 @@ from shared.contracts.pipeline_schema import GeneratedScript
 
 from ..config import settings
 from .context7_docs import get_manim_docs
-from .fewshot_examples import NARRATION_FEWSHOT, CODE_FEWSHOT
+from .fewshot_examples import NARRATION_FEWSHOT
+from ..prompts.manim_expert import (
+    MANIM_IDENTITY,
+    MANIM_MANDATORY_RULES,
+    MANIM_API_REFERENCE,
+    MANIM_PEDAGOGICAL_RULES,
+    MANIM_OUTPUT_FORMAT,
+)
+from ..prompts.manim_examples import MANIM_CODE_FEWSHOT
 
 logger = logging.getLogger(__name__)
 
@@ -119,9 +127,12 @@ DIFFICULTY_INSTRUCTIONS: dict[Difficulty, str] = {
     ),
 }
 
-# Built-in ManimCE reference so the LLM always has a baseline even if
-# Context7 is unavailable.
-MANIMCE_REFERENCE = r"""
+# ManimCE API reference is now in backend/app/prompts/manim_expert.py
+# (MANIM_API_REFERENCE). The old inline constant is kept as a thin alias
+# so any code that still references MANIMCE_REFERENCE doesn't break.
+MANIMCE_REFERENCE = MANIM_API_REFERENCE  # noqa: F811 — alias for compat
+
+_MANIMCE_REFERENCE_STUB = r"""
 MANIM COMMUNITY EDITION (ManimCE v0.19–v0.20) — QUICK API REFERENCE
 ====================================================================
 You write complete ManimCE Python code. Import: from manim import *
@@ -280,7 +291,7 @@ SCENE CLASS:
   class MyScene(Scene):
       def construct(self):
           ...
-"""
+"""  # end _MANIMCE_REFERENCE_STUB
 
 
 def _fetch_live_manim_docs(source_text: str) -> str:
@@ -858,121 +869,49 @@ source material, go deeper (examples, applications) rather than repeating.
         return {"scenes": ordered_scenes}, elapsed
 
     def _build_code_system_prompt(self, live_manim_docs: str = "", dcfg: "_DifficultyConfig | None" = None) -> str:
+        """Build the system prompt for LLM Call #2 (Manim code generation).
+
+        Assembles modular prompt sections from backend/app/prompts/:
+          - MANIM_IDENTITY          — who the model is, engine note
+          - MANIM_MANDATORY_RULES   — 8 rules that prevent top failure modes
+          - MANIM_API_REFERENCE     — ManimCE API quick reference
+          - live_docs_section       — optional live Context7 docs
+          - MANIM_PEDAGOGICAL_RULES — pedagogical animation principles
+          - difficulty_section      — difficulty-specific play count / structure requirements
+          - MANIM_OUTPUT_FORMAT     — JSON output format spec
+          - MANIM_CODE_FEWSHOT      — 5 curated working examples
+        """
         cfg = dcfg or DIFFICULTY_CONFIGS[Difficulty.BEGINNER]
+
         live_docs_section = ""
         if live_manim_docs:
-            live_docs_section = f"""
-================================================================================
-SUPPLEMENTARY MANIM DOCS (from Context7 — ManimCE documentation)
-================================================================================
-{live_manim_docs}
-================================================================================
-"""
+            live_docs_section = (
+                "\n================================================================================\n"
+                "SUPPLEMENTARY MANIM DOCS (from Context7 — ManimCE documentation)\n"
+                "================================================================================\n"
+                + live_manim_docs
+                + "\n================================================================================\n"
+            )
 
-        return f"""\
-You are an expert ManimCE (Manim Community Edition) animation developer \
-producing 3Blue1Brown-quality video scenes. You generate COMPLETE, RUNNABLE \
-Python code for each scene.
+        difficulty_section = (
+            "\n=== DIFFICULTY-SPECIFIC REQUIREMENTS ===\n"
+            f"- Each scene needs >= {cfg.min_play_calls} self.play() calls to fill the duration.\n"
+            f"- At least {cfg.min_visual_structure_scenes} scenes must use visual structures "
+            "(graphs, diagrams, tables, trees) — not text walls.\n"
+            "- Guard division lambdas: lambda x: expr/x if abs(x) > 0.01 else 0\n"
+            "- Font sizes: headers 40-48, body 28-36, minimum 24. Use weight=BOLD for titles.\n"
+        )
 
-You will receive a narration script with visual descriptions for each scene. \
-Your job is to write ManimCE code that SYNCHRONIZES with the narration — \
-when the narrator mentions a concept, the corresponding visual MUST appear \
-at that exact moment in the animation.
-
-=== SYNCHRONIZATION RULES (CRITICAL) ===
-1. Read the narration carefully. Break it into logical segments.
-2. For each segment of narration (~1-2 sentences), create a corresponding \
-   animation sequence with matching timing.
-3. Use self.wait() and run_time values to pace animations with the narration.
-4. The narrator speaks at ~150 words per minute. Keep each scene concise.
-5. When the narrator says "look at this graph", the graph should be appearing.
-6. When the narrator says "notice how X changes", X should be animating.
-7. Match the total animation duration to duration_hint_seconds for each scene.
-
-{MANIMCE_REFERENCE}
-{live_docs_section}
-
-=== LAYOUT & VISUAL RULES ===
-Frame: 14.2 x 8 units. Safe zone: x in [-6.0, 6.0], y in [-3.2, 3.2].
-There is NO camera auto-zoom — you MUST keep all content within the safe zone.
-Oversized mobjects are clamped, but the camera stays fixed.
-- Title at UP*3.2, main content at DOWN*0.3, sprite safe zone: x<=-4.2, y>=1.4
-- Font sizes: headers 40-48, body 28-36, minimum 24. Use weight=BOLD for titles.
-- Max 2 text elements on screen at any time. Use LaggedStart for lists, NEVER bulk FadeIn.
-- Use visual structures (graphs, diagrams, tables) NOT text walls.
-- Colors on BLACK: TITLES=WHITE/GOLD, PRIMARY=BLUE, SECONDARY=GREEN, HIGHLIGHT=YELLOW.
-
-=== TEXT OVERLAP PREVENTION (CRITICAL — READ CAREFULLY) ===
-Text overlapping is the #1 visual quality issue. You MUST follow these rules:
-1. BEFORE adding any new Text(), ALWAYS FadeOut the previous text in that region.
-   WRONG: self.play(Write(text_a)) ... self.play(Write(text_b))  # text_b lands on text_a!
-   RIGHT: self.play(Write(text_a)) ... self.play(FadeOut(text_a)) ... self.play(Write(text_b))
-2. Use ReplacementTransform to swap text in-place (old becomes new, no overlap):
-   self.play(ReplacementTransform(old_text, new_text), run_time=1.2)
-3. If you MUST keep old content visible while adding new content, position them in \
-   SEPARATE non-overlapping regions (e.g., old at UP*1.5, new at DOWN*1.0).
-4. For graph scenes: place labels ONLY with .next_to() relative to the graph element. \
-   NEVER place free-floating Text near a graph — it WILL overlap axes/labels.
-5. When transitioning between content sections, do a section cleanup first:
-   self.play(*[FadeOut(m) for m in self.mobjects if m is not title], run_time=0.8)
-6. NEVER have more than 1 descriptive text + 1 title visible simultaneously. \
-   If you need to show a new explanation, FadeOut the old one first.
-7. For progressive reveals (bullet points), use VGroup.arrange(DOWN) so items \
-   stack vertically with automatic spacing — NEVER position them manually at the \
-   same coordinates.
-
-=== SCENE LIFECYCLE (MANDATORY) ===
-1. Title first: title.move_to(UP * 3.2)
-2. Build content below title — keep a SINGLE content region, clear it between sections
-3. BETWEEN SECTIONS: FadeOut ALL old content (except title) before adding new content:
-     self.play(*[FadeOut(m) for m in self.mobjects if m is not title], run_time=0.8)
-4. KEEP FINAL CONTENT VISIBLE: Do NOT FadeOut at the end of the scene. \
-   Leave your last visual content on screen. The rendering system handles transitions \
-   automatically. End with self.wait(2) so the final frame holds.
-
-=== IMPORTANT RULES ===
-1. Import MUST be: from manim import *
-2. Class names: Scene000, Scene001, Scene002, etc.
-3. Use Create() NOT ShowCreation(). Use Unwrite() NOT Uncreate().
-4. NEVER use MathTex(), Tex(), or any LaTeX-based text. LaTeX is NOT installed.
-   Use Text() for ALL text including math. Use Unicode for math symbols.
-5. Use axes.plot() NOT axes.get_graph(). Use axes.c2p() for coordinates.
-6. AXIS LABELS: Always pass Text() objects to get_x_axis_label(), etc.
-   WRONG: axes.get_x_axis_label("x")
-   RIGHT: axes.get_x_axis_label(Text("x", font_size=28))
-7. GRAPH LABELS: Use Text().next_to(), NOT get_graph_label() with strings.
-8. Guard lambdas: lambda x: 1/x if abs(x) > 0.01 else 0
-9. No plugins. Only manim and numpy imports.
-10. NEVER use TransformMatchingTex — use ReplacementTransform.
-11. Minimum font_size: 24. Never .scale() below 0.8 on text.
-12. Every self.play() MUST have run_time=1.0 to 2.5 seconds.
-13. Each scene needs >= {cfg.min_play_calls} self.play() calls to fill the duration.
-14. DURATION MATCHING: Your animation MUST last at least as long as duration_hint_seconds. \
-   Add self.wait(1) to self.wait(2) pauses between logical sections to fill the time. \
-   The narration audio will play over your animation — if the animation is shorter than \
-   the audio, the video gets cut short.
-15. TEXT WIDTH SAFETY: text.set_width(min(text.width, 8.5)) on any Text.
-16. TEXT OVERLAP PREVENTION: ALWAYS FadeOut old text before Writing new text in the same region. \
-   Use ReplacementTransform to swap text in-place. Never let two Text objects occupy the same area.
-17. SECTION TRANSITIONS: Between logical sections, clear old content with: \
-   self.play(*[FadeOut(m) for m in self.mobjects if m is not title], run_time=0.8)
-
-=== OUTPUT FORMAT ===
-Respond with ONLY valid JSON (no markdown fences, no extra text):
-{{
-    "scene_index": 0,
-    "manim_code": "from manim import *\\nimport numpy as np\\n\\nclass Scene000(MovingCameraScene):\\n    def construct(self):\\n        ..."
-}}
-
-The manim_code MUST be COMPLETE, RUNNABLE ManimCE Python code:
-- Start with: from manim import * and import numpy as np
-- Define ONE MovingCameraScene subclass named Scene{{NNN}} (Scene000, Scene001, etc.)
-- 25-55 lines of animation code
-- Duration must match duration_hint_seconds
-- KEEP final content visible — do NOT FadeOut at the end. End with self.wait(2)
-
-{CODE_FEWSHOT}
-"""
+        return "\n\n".join([
+            MANIM_IDENTITY,
+            MANIM_MANDATORY_RULES,
+            MANIM_API_REFERENCE,
+            live_docs_section,
+            MANIM_PEDAGOGICAL_RULES,
+            difficulty_section,
+            MANIM_OUTPUT_FORMAT,
+            MANIM_CODE_FEWSHOT,
+        ])
 
     def _build_code_user_message(self, narration_data: dict, dcfg: "_DifficultyConfig | None" = None) -> str:
         cfg = dcfg or DIFFICULTY_CONFIGS[Difficulty.BEGINNER]
