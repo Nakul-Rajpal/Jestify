@@ -3,14 +3,20 @@
 #   docker build -f pipeline/Dockerfile .
 # ────────────────────────────────────────────────────────────────────────── #
 
-FROM python:3.11-slim AS base
+FROM python:3.13-slim AS base
 
 # ── System dependencies ────────────────────────────────────────────────── #
 RUN apt-get update && apt-get install -y --no-install-recommends \
     # Manim runtime
     ffmpeg \
     # TeX Live for MathTex / LaTeX rendering (dvisvgm, latex, etc.)
-    texlive-full \
+    # texlive-full is ~4GB and times out on Railway — use minimal set instead
+    texlive-latex-base \
+    texlive-latex-extra \
+    texlive-fonts-recommended \
+    texlive-fonts-extra \
+    texlive-science \
+    dvisvgm \
     # Cairo/Pango for Text() rendering in Manim
     libcairo2-dev \
     libpango1.0-dev \

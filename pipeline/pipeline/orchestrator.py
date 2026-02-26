@@ -574,7 +574,7 @@ class PipelineOrchestrator:
             "Fix the code so it renders successfully.\n\n"
             "CRITICAL RULES:\n"
             "- Use ONLY `from manim import *` — never manimlib or manimgl.\n"
-            "- The scene class MUST be named exactly `GeneratedScene` and extend `Scene`.\n"
+            "- The scene class MUST be named exactly `GeneratedScene` and extend `MovingCameraScene`.\n"
             "- The `construct(self)` method must contain all animation logic.\n"
             "- NEVER use `MathTex(...)`, `Tex(...)`, or any LaTeX-based text.\n"
             "  ALWAYS use `Text(...)` for ALL text rendering. LaTeX is NOT available.\n"
@@ -615,7 +615,13 @@ class PipelineOrchestrator:
             response = client.messages.create(
                 model=_CODE_FIX_MODEL,
                 max_tokens=4096,
-                system=system_prompt,
+                system=[
+                    {
+                        "type": "text",
+                        "text": system_prompt,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
                 messages=[{"role": "user", "content": user_message}],
             )
             elapsed = time.perf_counter() - t0
@@ -643,9 +649,11 @@ class PipelineOrchestrator:
                 logger.warning("[orchestrator] LLM fix missing 'def construct' — discarding")
                 return None
 
+            cache_read = getattr(response.usage, "cache_read_input_tokens", 0)
+            cache_create = getattr(response.usage, "cache_creation_input_tokens", 0)
             logger.info(
-                "[orchestrator] LLM fix for scene %d: %d chars (%.1fs, model=%s)",
-                scene_num, len(fixed_code), elapsed, _CODE_FIX_MODEL,
+                "[orchestrator] LLM fix for scene %d: %d chars (%.1fs, model=%s, cache_read=%d, cache_creation=%d)",
+                scene_num, len(fixed_code), elapsed, _CODE_FIX_MODEL, cache_read, cache_create,
             )
             return fixed_code
 

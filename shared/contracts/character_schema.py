@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from .enums import Character
 
@@ -18,7 +18,7 @@ class CharacterPersonality(BaseModel):
 
 
 # Pre-defined character personalities
-CHARACTER_PERSONALITIES: dict[Character, CharacterPersonality] = {
+CHARACTER_PERSONALITIES: Dict[Character, CharacterPersonality] = {
     Character.LEBRON: CharacterPersonality(
         id=Character.LEBRON,
         display_name="LeBron James",

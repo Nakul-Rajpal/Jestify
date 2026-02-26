@@ -1,0 +1,12 @@
+[build]
+# IMPORTANT: In Railway dashboard, set "Config file path" to backend/railway.toml
+# and leave "Root directory" blank so the build context is the project root.
+# This is required so the Dockerfile can COPY shared/ into the image.
+builder = "DOCKERFILE"
+dockerfilePath = "backend/Dockerfile"
+
+[deploy]
+healthcheckPath = "/health"
+healthcheckTimeout = 100
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
