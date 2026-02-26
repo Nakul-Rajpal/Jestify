@@ -1,4 +1,5 @@
 from pathlib import Path
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 from typing import List
 
@@ -29,17 +30,23 @@ class Settings(BaseSettings):
         "extra": "ignore",
     }
 
+    @field_validator("DATABASE_URL", mode="before")
+    @classmethod
+    def fix_asyncpg_prefix(cls, v: str) -> str:
+        """Ensure asyncpg driver prefix regardless of how the URL is provided."""
+        for prefix in ("postgres://", "postgresql://"):
+            if v.startswith(prefix):
+                return "postgresql+asyncpg://" + v[len(prefix):]
+        return v
+
+    @field_validator("STORAGE_PATH", mode="before")
+    @classmethod
+    def resolve_storage_path(cls, v: str) -> str:
+        """Resolve relative STORAGE_PATH values relative to the project root."""
+        path = Path(v)
+        if not path.is_absolute():
+            path = (PROJECT_ROOT / path).resolve()
+        return str(path)
+
 
 settings = Settings()
-
-# Railway injects DATABASE_URL as postgres:// or postgresql:// but asyncpg needs postgresql+asyncpg://
-for _prefix in ("postgres://", "postgresql://"):
-    if settings.DATABASE_URL.startswith(_prefix):
-        settings.DATABASE_URL = "postgresql+asyncpg://" + settings.DATABASE_URL[len(_prefix):]
-        break
-
-# Normalize STORAGE_PATH so relative values in .env are project-root relative.
-_storage_path = Path(settings.STORAGE_PATH)
-if not _storage_path.is_absolute():
-    _storage_path = (PROJECT_ROOT / _storage_path).resolve()
-settings.STORAGE_PATH = str(_storage_path)
