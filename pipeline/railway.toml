@@ -3,6 +3,7 @@
 
 [build]
 # Build context is the project root (needed for shared/ and backend/ imports)
+builder = "DOCKERFILE"
 dockerfilePath = "pipeline/Dockerfile"
 
 [deploy]

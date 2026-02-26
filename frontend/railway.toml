@@ -1,6 +1,7 @@
 [build]
 # Railway root dir for this service: frontend/
 # Build context is frontend/ directory only
+builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
 [deploy]
