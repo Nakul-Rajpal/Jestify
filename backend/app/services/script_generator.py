@@ -29,7 +29,7 @@ from .fewshot_examples import NARRATION_FEWSHOT, CODE_FEWSHOT
 logger = logging.getLogger(__name__)
 
 CLAUDE_MODEL = "claude-sonnet-4-20250514"          # narration (creative writing)
-CODE_MODEL = os.getenv("CODE_MODEL", "claude-haiku-4-5-20251001")  # code gen (fast, cheap)
+CODE_MODEL = os.getenv("CODE_MODEL", "claude-opus-4-6")  # code gen
 MAX_CODE_WORKERS = int(os.getenv("MAX_CODE_WORKERS", "8"))  # parallel scene code gen
 FAST_MODE = os.getenv("FAST_GENERATION_MODE", "true").lower() in {"1", "true", "yes"}
 ENABLE_CONTEXT7 = os.getenv("ENABLE_CONTEXT7_DOCS", "false").lower() in {"1", "true", "yes"}
@@ -122,164 +122,90 @@ DIFFICULTY_INSTRUCTIONS: dict[Difficulty, str] = {
 # Built-in ManimCE reference so the LLM always has a baseline even if
 # Context7 is unavailable.
 MANIMCE_REFERENCE = r"""
-MANIM COMMUNITY EDITION (ManimCE v0.19–v0.20) — QUICK API REFERENCE
-====================================================================
-You write complete ManimCE Python code. Import: from manim import *
+MANIM COMMUNITY EDITION (ManimCE v0.19–v0.20) — JESTIFY QUICK REFERENCE
+=========================================================================
+Import: from manim import *   Base class: MovingCameraScene (always)
 
-TEXT MOBJECTS (use Text() for EVERYTHING — LaTeX is NOT available):
-  Text("hello", font_size=36)           — titles, labels, prose (Pango/Cairo)
-  Text("x² + 1 = 0", font_size=36)     — math with Unicode superscripts
-  Text("f(x) = x²", font_size=36)      — functions
-  Text("∫₀¹ x dx = ½", font_size=36)   — integrals with Unicode
-  Text("Σᵢ₌₁ⁿ xᵢ", font_size=36)      — summations with Unicode
-  NEVER use MathTex() or Tex() — they require LaTeX which is not installed.
-  Use Unicode for math: x², x₁, √, π, Σ, ∫, →, ⇒, ≤, ≥, ≠, ≈, ∞, ±, ×, ÷
-  Superscripts: ⁰¹²³⁴⁵⁶⁷⁸⁹ⁿˣⁱ  Subscripts: ₀₁₂₃₄₅₆₇₈₉ₙₓᵢ
-  Fractions: write as a/b or use ½ ⅓ ¼ for common fractions
-  Text() accepts color= and font_size= as constructor args:
-    Text("x² + 1 = 0", color=BLUE, font_size=36)
-  MarkupText('<b>Bold</b> and <span foreground="blue">blue</span>')
-    — rich text with bold, italic, color, underline via PangoMarkup (no LaTeX)
+TEXT — LaTeX is NOT installed. Use Text() for EVERYTHING including math:
+  Text("f(x) = x²", font_size=36, color=BLUE)
+  Text("∫₀¹ x dx = ½", font_size=36)   Text("Σᵢ₌₁ⁿ xᵢ", font_size=36)
+  MarkupText('<b>Bold</b> <span foreground="blue">colored</span>')
+  Unicode math: x² x₁ √ π Σ ∫ → ⇒ ≤ ≥ ≠ ≈ ∞ ± × ÷  ½ ⅓ ¼
+  Superscripts: ⁰¹²³⁴⁵⁶⁷⁸⁹ⁿˣⁱ   Subscripts: ₀₁₂₃₄₅₆₇₈₉ₙₓᵢ
+  NEVER: MathTex(), Tex(), or get_graph_label()/get_x_axis_label() with plain strings.
 
-SHAPES & GEOMETRY:
-  Axes(x_range=[a,b,s], y_range=[c,d,s], x_length=7, y_length=5)
-  IMPORTANT: Use small ranges like [-3,3,1]. NEVER wider than [-5,5,1].
-  You can use x_length and y_length to control Axes size.
-  You can also use axis_config, tips, include_numbers for Axes customisation.
-  NumberPlane(x_range, y_range)
-  NumberLine(x_range)
-  Dot(point), Line(start, end), Arrow(start, end)
+SHAPES:
   Circle(radius=1.0), Square(side_length=1.0), Rectangle(width, height)
   RoundedRectangle(corner_radius=0.15, width=4, height=2)
-  VGroup(mob1, mob2, ...)               — group mobjects together
-  SurroundingRectangle(mob, color=YELLOW, buff=0.15)  # v0.19+: accepts multiple mobs
-  Brace(mob, direction)
-  BraceText(mob, "label", brace_direction=DOWN)  — brace with text (no LaTeX)
-  DashedLine(start, end)
-  CurvedArrow(start, end)                        — curved arrow between points
-  DoubleArrow(start, end)                        — arrow with tips on both ends
-  Polygon(*points), RegularPolygon(n=6)
-  Arc(angle), AnnularSector(inner_radius, outer_radius, angle)
+  Polygon(*points), RegularPolygon(n=6), Arc(angle=PI/2)
+  Dot(point), Line(start, end), Arrow(start, end), DashedLine(start, end)
+  NumberPlane(x_range, y_range), NumberLine(x_range)
+  Brace(mob, direction), SurroundingRectangle(mob, color=YELLOW, buff=0.15)
+  VGroup(mob1, mob2, ...)   — group and transform together
 
-MATRICES (no LaTeX — built-in bracket rendering):
-  Matrix([[1, 2], [3, 4]])                    — generic matrix with brackets
-  IntegerMatrix([[1, 0], [0, 1]])             — integer entries (no decimals)
-  DecimalMatrix([[1.5, 2.0], [3.1, 4.0]])     — decimal entries
-  m.get_entries()                              — VGroup of all entry mobjects
-  m.get_rows()                                 — list of VGroups per row
-  m.get_columns()                              — list of VGroups per column
-  m.get_brackets()                             — the bracket mobjects
-  IMPORTANT: Matrix entries are auto-rendered as Text. Do NOT build matrices
-  manually with Text() elements — always use Matrix/IntegerMatrix classes.
-  NEVER use MathTable for matrices. NEVER use MathTex for matrices.
-  Example — matrix multiplication:
-    A = IntegerMatrix([[1, 2], [3, 4]], left_bracket="(", right_bracket=")")
-    B = IntegerMatrix([[5, 6], [7, 8]], left_bracket="(", right_bracket=")")
-    A.shift(LEFT * 3); B.next_to(A, RIGHT, buff=1)
-    self.play(Create(A), Create(B))
+AXES & GRAPHS:
+  Axes(x_range=[-3,3,1], y_range=[-1,9,2], x_length=7, y_length=5,
+       axis_config={"include_numbers": True})
+  NEVER use x_range wider than [-5,5,1].
+  # Axis labels — MUST be Text(), never plain strings (strings crash with LaTeX error):
+  x_lab = axes.get_x_axis_label(Text("x", font_size=28))
+  y_lab = axes.get_y_axis_label(Text("f(x)", font_size=28))
+  graph = axes.plot(lambda x: x**2, color=BLUE, x_range=[-3, 3])
+  # For singularities: axes.plot(lambda x: 1/x if abs(x) > 0.01 else 0, ...)
+  dot = Dot(axes.c2p(x, y))
+  area = axes.get_area(graph, x_range=[0, 2], color=BLUE, opacity=0.3)
+  # Graph labels — always use Text().next_to(), not get_graph_label() with strings:
+  graph_label = Text("f(x) = x²", color=BLUE, font_size=28)
+  graph_label.next_to(axes.c2p(2, 4), RIGHT)
 
-TABLES (no LaTeX — uses Pango text rendering):
-  Table([["A","B"],["C","D"]],
-        row_labels=[Text("R1"), Text("R2")],
-        col_labels=[Text("C1"), Text("C2")],
-        include_outer_lines=True)
-  t.add_highlighted_cell((2,2), color=GREEN)  — highlight a cell
-  MobjectTable — same API but entries must be Mobjects
-  NEVER use MathTable (requires LaTeX).
+NODE GRAPHS & TREES (labels MUST be Text dict, never labels=True):
+  Graph([1,2,3,4,5], [(1,2),(1,3),(2,4),(2,5)],
+        labels={v: Text(str(v), font_size=20) for v in range(1,6)},
+        layout="tree", root_vertex=1, vertex_config={"color": BLUE, "radius": 0.3})
+  Layouts: "spring", "circular", "tree", "kamada_kawai"
+  DiGraph(vertices, edges, labels={v: Text(...) ...})  — directed graph
 
-GRAPHS & TREES (built-in layout engine, no LaTeX):
-  Graph(vertices, edges, labels={...}, layout="spring")
-  Layouts: "spring", "circular", "tree", "kamada_kawai", "planar", "partite"
-  Tree example:
-    Graph([1,2,3,4,5], [(1,2),(1,3),(2,4),(2,5)],
-          labels={v: Text(str(v), font_size=20) for v in range(1,6)},
-          layout="tree", root_vertex=1)
-  DiGraph(vertices, edges, labels={...}) — directed graph with arrows
-  IMPORTANT: Always pass labels as {v: Text(...)} dict, NOT labels=True (triggers LaTeX).
-  vertex_config={"color": BLUE, "radius": 0.3} for styling.
+MATRICES (entries auto-render as Text, never build manually):
+  IntegerMatrix([[1,2],[3,4]], left_bracket="(", right_bracket=")")
+  DecimalMatrix([[1.5,2.0],[3.1,4.0]])
+  Matrix([[1,2],[3,4]])   NEVER: MathTable, MathTex inside matrices.
 
-BAR CHARTS (no LaTeX with Text labels):
-  BarChart(values=[10,20,30], bar_names=["A","B","C"],
-           y_range=[0,35,5], x_length=10, y_length=5)
-  chart.change_bar_values([15,25,35])  — animate bar height changes
-  For bar labels: chart.get_bar_labels(font_size=30, label_constructor=Text)
+TABLES:
+  Table([["A","B"],["C","D"]], row_labels=[Text("R1"), Text("R2")],
+        col_labels=[Text("C1"), Text("C2")], include_outer_lines=True)
+  t.add_highlighted_cell((2,2), color=GREEN)   NEVER: MathTable.
 
-CODE DISPLAY (syntax-highlighted, no LaTeX):
-  Code(code_string='def hello():\\n    print("hi")',
-       language="python", background="rectangle")  # v0.19+: default is "rectangle"
+BAR CHARTS:
+  BarChart(values=[10,20,30], bar_names=["A","B","C"], y_range=[0,35,5])
+  chart.get_bar_labels(font_size=30, label_constructor=Text)
 
 POSITIONING:
   mob.to_edge(UP/DOWN/LEFT/RIGHT, buff=0.5)
-  mob.to_corner(UL/UR/DL/DR, buff=0.5)
   mob.next_to(other, DOWN, buff=0.3)
-  mob.move_to(point_or_mob)
-  mob.shift(RIGHT * 2 + UP * 1)
+  mob.move_to(point), mob.shift(RIGHT*2 + UP*1)
   VGroup(...).arrange(DOWN, buff=0.4)
   VGroup(...).arrange_in_grid(n_rows, n_cols, buff=0.3)
+  Directions: UP DOWN LEFT RIGHT UL UR DL DR ORIGIN
 
-DIRECTIONS: UP, DOWN, LEFT, RIGHT, UL, UR, DL, DR, ORIGIN
-
-ANIMATIONS (ManimCE names):
-  Write(mob), Create(mob), FadeIn(mob), FadeOut(mob)
-  FadeIn(mob, shift=UP*0.3)            — directional fade in
-  Transform(src, dst), ReplacementTransform(src, dst)
-  TransformMatchingShapes(old, new)     — morph shapes
+ANIMATIONS:
+  Write(mob), Create(mob), FadeIn(mob, shift=UP*0.3), FadeOut(mob)
+  ReplacementTransform(src, dst)   — swap text/shapes in-place (no overlap)
+  Transform(src, dst), GrowArrow(arrow), GrowFromCenter(mob)
   Indicate(mob, color=YELLOW, scale_factor=1.2)
-  Circumscribe(mob, color=YELLOW)       — draw a circle around mobject
-  GrowFromCenter(mob), GrowArrow(arrow)
-  MoveAlongPath(dot, path)
-  LaggedStart(*anims, lag_ratio=0.2)    — staggered reveals (MANDATORY for lists)
+  Circumscribe(mob, color=YELLOW), Flash(point, color=YELLOW)
+  LaggedStart(*anims, lag_ratio=0.2)   — staggered reveals, MANDATORY for lists
   AnimationGroup(*anims)
-  Flash(point, color=YELLOW)
-  Unwrite(mob)                          — reverse of Write
-  Wiggle(mob)                           — wiggle effect
-  ApplyWave(mob)                        — wave effect
+  mob.animate.shift(RIGHT*2), mob.animate.set_color(YELLOW)
+  mob.animate.set_opacity(0.3)         — dim previous elements
+  Use Create() NOT ShowCreation().   NEVER TransformMatchingTex.
 
-  IMPORTANT: Use Create() NOT ShowCreation(). Use Unwrite() NOT Uncreate().
-
-PLAY:
-  self.play(Create(mob), run_time=2)
-  self.play(mob.animate.shift(RIGHT*2), run_time=1.5)
-  self.play(mob.animate.set_color(YELLOW))
-  self.play(mob.animate.set_opacity(0.3))  — dim previous elements
-  self.wait(2)
-
-  # Animated number displays (no LaTeX):
+VALUETRACKER (animated number displays, no LaTeX):
   tracker = ValueTracker(0)
-  display = always_redraw(lambda: Text(f"Score: {tracker.get_value():.0f}", font_size=36))
-  self.play(tracker.animate.set_value(100), run_time=2)
+  display = always_redraw(lambda: Text(f"{tracker.get_value():.1f}", font_size=36))
+  self.add(display); self.play(tracker.animate.set_value(100), run_time=2)
 
-AXES METHODS (ManimCE):
-  graph = axes.plot(lambda x: x**2, color=BLUE, x_range=[-3,3])
-  dot = Dot(axes.c2p(x, y))             — coordinate to point
-  axes.input_to_graph_point(x_val, graph) — get point on graph at x
-  area = axes.get_area(graph, x_range=[0, 2], color=BLUE, opacity=0.3)
-  axes.add_coordinates()                 — show numbers on axes
-
-  AXIS LABELS — MUST pass Text() objects, NOT strings (strings trigger hidden LaTeX):
-    x_lab = axes.get_x_axis_label(Text("x", font_size=28))
-    y_lab = axes.get_y_axis_label(Text("f(x)", font_size=28))
-    WRONG: axes.get_x_axis_label("x")  ← crashes with LaTeX error!
-    RIGHT: axes.get_x_axis_label(Text("x", font_size=28))
-
-  GRAPH LABELS — use .next_to() with Text(), NOT get_graph_label() with strings:
-    graph_label = Text("f(x) = x²", color=BLUE, font_size=28)
-    graph_label.next_to(axes.c2p(2, 4), RIGHT)
-    If you MUST use get_graph_label(), pass a Text() object:
-    WRONG: axes.get_graph_label(graph, "f(x)")  ← hidden LaTeX!
-    RIGHT: axes.get_graph_label(graph, Text("f(x)", font_size=28))
-
-COLORS:
-  BLUE, BLUE_A/B/C/D/E, RED, RED_A-E, GREEN, GREEN_A-E,
-  YELLOW, YELLOW_A-E, GOLD, GOLD_A-E, TEAL, TEAL_A-E,
-  PURPLE, PURPLE_A-E, MAROON, MAROON_A-E, ORANGE, PINK,
-  GREY, GREY_A-D, WHITE, BLACK, GREY_BROWN
-  v0.20: PURE_CYAN, PURE_MAGENTA, PURE_YELLOW (full-saturation primaries)
-
-SCENE CLASS:
-  class MyScene(Scene):
-      def construct(self):
-          ...
+COLORS: BLUE/RED/GREEN/YELLOW/GOLD/TEAL/PURPLE/MAROON/ORANGE/PINK/GREY/WHITE/BLACK
+  Variants: BLUE_A–E, RED_A–E, etc.  Titles: GOLD or WHITE  Highlights: YELLOW
 """
 
 
@@ -931,31 +857,19 @@ Text overlapping is the #1 visual quality issue. You MUST follow these rules:
    automatically. End with self.wait(2) so the final frame holds.
 
 === IMPORTANT RULES ===
-1. Import MUST be: from manim import *
-2. Class names: Scene000, Scene001, Scene002, etc.
-3. Use Create() NOT ShowCreation(). Use Unwrite() NOT Uncreate().
-4. NEVER use MathTex(), Tex(), or any LaTeX-based text. LaTeX is NOT installed.
-   Use Text() for ALL text including math. Use Unicode for math symbols.
-5. Use axes.plot() NOT axes.get_graph(). Use axes.c2p() for coordinates.
-6. AXIS LABELS: Always pass Text() objects to get_x_axis_label(), etc.
-   WRONG: axes.get_x_axis_label("x")
-   RIGHT: axes.get_x_axis_label(Text("x", font_size=28))
-7. GRAPH LABELS: Use Text().next_to(), NOT get_graph_label() with strings.
-8. Guard lambdas: lambda x: 1/x if abs(x) > 0.01 else 0
-9. No plugins. Only manim and numpy imports.
-10. NEVER use TransformMatchingTex — use ReplacementTransform.
-11. Minimum font_size: 24. Never .scale() below 0.8 on text.
-12. Every self.play() MUST have run_time=1.0 to 2.5 seconds.
-13. Each scene needs >= {cfg.min_play_calls} self.play() calls to fill the duration.
-14. DURATION MATCHING: Your animation MUST last at least as long as duration_hint_seconds. \
-   Add self.wait(1) to self.wait(2) pauses between logical sections to fill the time. \
-   The narration audio will play over your animation — if the animation is shorter than \
-   the audio, the video gets cut short.
-15. TEXT WIDTH SAFETY: text.set_width(min(text.width, 8.5)) on any Text.
-16. TEXT OVERLAP PREVENTION: ALWAYS FadeOut old text before Writing new text in the same region. \
-   Use ReplacementTransform to swap text in-place. Never let two Text objects occupy the same area.
-17. SECTION TRANSITIONS: Between logical sections, clear old content with: \
-   self.play(*[FadeOut(m) for m in self.mobjects if m is not title], run_time=0.8)
+1. Imports: from manim import * and import numpy as np only. No other imports.
+2. Class name: Scene000, Scene001, Scene002, etc. ONE class per file.
+3. NEVER use MathTex(), Tex(), labels=True on graphs, or plain strings in axis label methods.
+4. Every self.play() MUST have run_time=1.0–2.5 seconds.
+5. Each scene needs >= {cfg.min_play_calls} self.play() calls to reach duration_hint_seconds.
+6. DURATION: Add self.wait(1)–self.wait(2) between sections to match duration_hint_seconds. \
+   The narration audio runs over the animation — short animations cut the video.
+7. TEXT WIDTH SAFETY: text.set_width(min(text.width, 8.5)) on any Text mobject.
+8. TEXT OVERLAP (see section above): FadeOut old text before adding new text in same region. \
+   Use ReplacementTransform to swap in-place. Never let two Text objects overlap.
+9. SECTION CLEANUP: self.play(*[FadeOut(m) for m in self.mobjects if m is not title], run_time=0.8)
+10. KEEP FINAL CONTENT VISIBLE: Never FadeOut at end. End with self.wait(2).
+11. Minimum font_size: 24. Weight=BOLD for titles.
 
 === OUTPUT FORMAT ===
 Respond with ONLY valid JSON (no markdown fences, no extra text):

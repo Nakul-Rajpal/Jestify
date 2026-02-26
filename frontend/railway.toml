@@ -1,0 +1,10 @@
+[build]
+# Railway root dir for this service: frontend/
+# Build context is frontend/ directory only
+dockerfilePath = "Dockerfile"
+
+[deploy]
+healthcheckPath = "/"
+healthcheckTimeout = 100
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
