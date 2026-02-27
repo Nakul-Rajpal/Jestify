@@ -6,6 +6,7 @@ from .generate import router as generate_router
 from .jobs import router as jobs_router
 from .library import router as library_router
 from .voices import router as voices_router
+from .waitlist import router as waitlist_router
 
 all_routers = [
     characters_router,
@@ -14,6 +15,7 @@ all_routers = [
     jobs_router,
     library_router,
     voices_router,
+    waitlist_router,
 ]
 
 __all__ = [
@@ -23,5 +25,6 @@ __all__ = [
     "jobs_router",
     "library_router",
     "voices_router",
+    "waitlist_router",
     "all_routers",
 ]
