@@ -1,168 +1,130 @@
 @import "tailwindcss";
 
-/* Wordmark font (Space Grotesk) loaded via next/font in layout.tsx */
-
 :root {
-  --background: #0a0712;
-  --foreground: #f5f1ff;
-  --glass-magenta: 226, 82, 255;
-  --glass-rose: 255, 103, 214;
-  --glass-border: rgba(255, 255, 255, 0.22);
+  --background: #F4F2EE;
+  --foreground: #0a0a0a;
+  --accent: #E07B2A;
+  --charcoal: #1C1C1C;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-inter);
+  --font-sans: var(--font-instrument-sans), "Instrument Sans", system-ui, sans-serif;
+  --font-serif: var(--font-instrument-serif), "Instrument Serif", Georgia, serif;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-inter), system-ui, -apple-system, sans-serif;
-  min-height: 100vh;
-  background-image:
-    radial-gradient(1200px 720px at 10% -15%, rgba(211, 74, 255, 0.34), transparent 62%),
-    radial-gradient(980px 640px at 88% 8%, rgba(153, 69, 255, 0.22), transparent 58%),
-    radial-gradient(920px 640px at 50% 110%, rgba(255, 88, 220, 0.14), transparent 63%),
-    linear-gradient(160deg, #07050d 0%, #100a1e 48%, #12072a 100%);
-  background-attachment: fixed;
+  font-family: var(--font-instrument-sans), system-ui, sans-serif;
 }
 
+/* ── Glassmorphism ── */
+.glass {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+}
+
+.glass-dark {
+  background: rgba(10, 10, 10, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* ── Animations ── */
+@keyframes marquee {
+  0%   { transform: translateX(0%); }
+  100% { transform: translateX(-50%); }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50%       { transform: translateY(-20px); }
+}
+
+@keyframes float-delayed {
+  0%, 100% { transform: translateY(0); }
+  50%       { transform: translateY(-20px); }
+}
+
+.animate-marquee {
+  animation: marquee 30s linear infinite;
+  display: inline-block;
+}
+
+.animate-float {
+  animation: float 8s ease-in-out infinite;
+}
+
+.animate-float-delayed {
+  animation: float 8s ease-in-out 4s infinite;
+}
+
+/* ── Selection ── */
+::selection {
+  background: #E07B2A;
+  color: white;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #ccc;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #aaa;
+}
+
+/* ── Legacy dark-theme utilities (kept for backward compat) ── */
 .purple-gradient-stage {
   position: relative;
   isolation: isolate;
 }
 
-.purple-gradient-stage::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: -2;
-  pointer-events: none;
-  background:
-    radial-gradient(640px 380px at 50% 0%, rgba(250, 135, 255, 0.16), transparent 68%),
-    radial-gradient(520px 320px at 20% 36%, rgba(143, 94, 255, 0.13), transparent 72%);
-}
-
-.purple-gradient-stage::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  opacity: 0.28;
-  background-image:
-    linear-gradient(to right, rgba(255, 255, 255, 0.055) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(255, 255, 255, 0.045) 1px, transparent 1px);
-  background-size: 80px 80px;
-  mask-image: radial-gradient(circle at 50% 30%, black 35%, transparent 90%);
-}
-
 .liquid-glass-card {
   position: relative;
-  border: 1px solid var(--glass-border);
-  background:
-    linear-gradient(155deg, rgba(var(--glass-rose), 0.2) 0%, rgba(var(--glass-magenta), 0.14) 46%, rgba(56, 21, 96, 0.2) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: linear-gradient(155deg, rgba(255,103,214,0.2) 0%, rgba(226,82,255,0.14) 46%, rgba(56,21,96,0.2) 100%);
   backdrop-filter: blur(22px) saturate(150%);
   -webkit-backdrop-filter: blur(22px) saturate(150%);
-  box-shadow:
-    0 12px 40px rgba(110, 25, 150, 0.28),
-    inset 0 1px 0 rgba(255, 255, 255, 0.26),
-    inset 0 -1px 0 rgba(255, 255, 255, 0.08);
-}
-
-.liquid-glass-card::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  pointer-events: none;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.18) 0%, rgba(255, 255, 255, 0.02) 44%, rgba(255, 255, 255, 0) 100%);
+  box-shadow: 0 12px 40px rgba(110,25,150,0.28), inset 0 1px 0 rgba(255,255,255,0.26), inset 0 -1px 0 rgba(255,255,255,0.08);
 }
 
 .liquid-glass-toolbar {
   border: 1px solid rgba(255, 255, 255, 0.26);
-  background:
-    linear-gradient(135deg, rgba(var(--glass-rose), 0.32) 0%, rgba(var(--glass-magenta), 0.24) 52%, rgba(47, 18, 88, 0.34) 100%);
+  background: linear-gradient(135deg, rgba(255,103,214,0.32) 0%, rgba(226,82,255,0.24) 52%, rgba(47,18,88,0.34) 100%);
   backdrop-filter: blur(26px) saturate(160%);
   -webkit-backdrop-filter: blur(26px) saturate(160%);
-  box-shadow:
-    0 18px 50px rgba(123, 29, 180, 0.36),
-    inset 0 1px 0 rgba(255, 255, 255, 0.32),
-    inset 0 -1px 0 rgba(255, 255, 255, 0.1);
+  box-shadow: 0 18px 50px rgba(123,29,180,0.36), inset 0 1px 0 rgba(255,255,255,0.32), inset 0 -1px 0 rgba(255,255,255,0.1);
 }
 
 .liquid-glass-pill {
   border: 1px solid rgba(255, 255, 255, 0.18);
-  background:
-    linear-gradient(145deg, rgba(var(--glass-rose), 0.2), rgba(var(--glass-magenta), 0.14));
+  background: linear-gradient(145deg, rgba(255,103,214,0.2), rgba(226,82,255,0.14));
   backdrop-filter: blur(16px) saturate(145%);
   -webkit-backdrop-filter: blur(16px) saturate(145%);
 }
 
-.liquid-glass-chip {
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  background:
-    linear-gradient(145deg, rgba(var(--glass-rose), 0.2), rgba(var(--glass-magenta), 0.14));
-  backdrop-filter: blur(14px) saturate(140%);
-  -webkit-backdrop-filter: blur(14px) saturate(140%);
-}
-
-.logo-unglow {
-  position: absolute;
-  left: 50%;
-  top: calc(100% - 8px);
-  width: 180px;
-  height: 52px;
-  transform: translateX(-50%);
-  border-radius: 999px;
-  background: radial-gradient(ellipse at center, rgba(214, 82, 255, 0.62) 0%, rgba(192, 71, 250, 0.42) 42%, rgba(147, 56, 209, 0) 78%);
-  filter: blur(14px);
-  pointer-events: none;
-}
-
 .neo-grotesk-wordmark {
   margin-top: 0.35rem;
-  font-family:
-    var(--font-space-grotesk),
-    "Neue Haas Grotesk Display Pro",
-    "Neue Haas Grotesk Text Pro",
-    "Helvetica Neue",
-    "SF Pro Display",
-    "Arial Narrow",
-    Arial,
-    sans-serif;
   font-size: clamp(2.8rem, 8.6vw, 5.4rem);
   font-weight: 750;
   line-height: 0.9;
   letter-spacing: -0.02em;
   text-transform: uppercase;
   color: rgba(251, 247, 255, 0.99);
-  text-shadow:
-    0 0 18px rgba(214, 82, 255, 0.32),
-    0 8px 26px rgba(52, 13, 78, 0.5);
 }
 
-/* Custom scrollbar */
-::-webkit-scrollbar {
-  width: 6px;
-}
-
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  background: #404040;
-  border-radius: 3px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: #525252;
-}
-
-/* Smooth textarea auto-resize */
 textarea {
   field-sizing: content;
 }
