@@ -22,7 +22,9 @@ class Settings(BaseSettings):
     CONTEXT7_API_KEY: str = ""
     DOCUMENT_EXTRACT_TIMEOUT_SECONDS: int = 30
     STORAGE_PATH: str = str(PROJECT_ROOT / "storage")
-    CORS_ORIGINS: List[str] = ["http://localhost:3000"]
+    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:3001", "http://localhost:3002"]
+    RESEND_API_KEY: str = ""
+    RESEND_FROM_EMAIL: str = "Jestify <waitlist@jestify.org>"
 
     model_config = {
         "env_file": str(PROJECT_ROOT / ".env"),

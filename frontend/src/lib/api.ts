@@ -78,3 +78,19 @@ export async function getTopicVideos(
     `/api/library/${subjectId}/topics/${topicId}`
   );
 }
+
+export interface WaitlistSignupResponse {
+  message: string;
+}
+
+export async function joinWaitlist(
+  email: string
+): Promise<WaitlistSignupResponse> {
+  return request<WaitlistSignupResponse>("/api/waitlist", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ email }),
+  });
+}

@@ -15,3 +15,4 @@ pydantic>=2.0
 pydantic-settings
 python-dotenv
 httpx
+resend
