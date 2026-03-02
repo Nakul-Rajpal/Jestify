@@ -1,6 +1,6 @@
 .PHONY: dev dev-frontend dev-backend dev-worker setup-frontend setup-backend setup-pipeline docker-up docker-down
 
-PYTHON ?= python3.13
+PYTHON ?= $(if $(VIRTUAL_ENV),$(VIRTUAL_ENV)/bin/python,python3)
 
 # Start all services via Docker
 docker-up:

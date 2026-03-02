@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import { joinWaitlist } from "@/lib/api";
 
 type WaitlistStatus = "idle" | "loading" | "success" | "error";
@@ -132,12 +133,15 @@ export default function Home() {
                 <polyline points="12 5 19 12 12 19" />
               </svg>
             </a>
-            <button className="px-8 py-4 bg-white border border-gray-200 text-black rounded-full font-medium hover:bg-gray-50 transition-colors flex items-center gap-2">
+            <Link
+              href="/generate"
+              className="px-8 py-4 bg-white border border-gray-200 text-black rounded-full font-medium hover:bg-gray-50 transition-colors flex items-center gap-2"
+            >
               <svg className="w-4 h-4 text-[#E07B2A]" viewBox="0 0 24 24" fill="currentColor">
                 <polygon points="5 3 19 12 5 21 5 3" />
               </svg>
-              Watch Demo
-            </button>
+              Generate Video
+            </Link>
           </div>
         </div>
 
