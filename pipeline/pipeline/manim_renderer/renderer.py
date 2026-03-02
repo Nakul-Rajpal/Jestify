@@ -14,7 +14,15 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_RENDER_TIMEOUT_SECONDS = 300
+
+def _render_timeout_from_env(default_seconds: int = 300) -> int:
+    try:
+        return max(30, int(os.getenv("MANIM_RENDER_TIMEOUT_SECONDS", str(default_seconds))))
+    except Exception:
+        return default_seconds
+
+
+_RENDER_TIMEOUT_SECONDS = _render_timeout_from_env()
 
 
 class ManimRenderer:

@@ -38,6 +38,7 @@ export interface GenerateRequest {
   difficulty: Difficulty;
   document_ids: string[];
   prompt?: string;
+  interests?: string[];
   voice_id?: string;
 }
 

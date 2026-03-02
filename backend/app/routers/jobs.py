@@ -1,6 +1,7 @@
 """Router for job status and video retrieval endpoints."""
 
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -65,6 +66,38 @@ async def get_job_status(
     job = await job_manager.get_job(job_uuid)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found.")
+
+    if job.status == JobStatus.PENDING.value:
+        elapsed_seconds = max(
+            0.0,
+            (datetime.now(timezone.utc) - job.created_at).total_seconds(),
+        )
+
+        if elapsed_seconds >= settings.JOB_QUEUE_FAIL_SECONDS:
+            fail_message = (
+                "Job stayed queued too long. No worker appears to be consuming queue "
+                "'video_pipeline'. Start the pipeline worker (for local dev: `make dev-worker`) "
+                "and retry."
+            )
+            job = await job_manager.update_job_status(
+                job_uuid,
+                status=JobStatus.FAILED.value,
+                progress_percent=0,
+                current_step="Failed: worker unavailable",
+                error_message=fail_message,
+            )
+            await db.commit()
+        elif elapsed_seconds >= settings.JOB_QUEUE_WARNING_SECONDS:
+            warning_step = (
+                "Still queued. Ensure a Celery worker is running on queue "
+                "'video_pipeline'."
+            )
+            if job.current_step != warning_step:
+                job = await job_manager.update_job_status(
+                    job_uuid,
+                    current_step=warning_step,
+                )
+                await db.commit()
 
     # Safety net: if worker wrote output file but DB/Redis missed updates,
     # surface completion so frontend never hangs on "pending".

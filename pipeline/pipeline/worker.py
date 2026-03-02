@@ -194,6 +194,7 @@ def generate_video_task(
     difficulty: str,
     extracted_text: str,
     prompt: Optional[str] = None,
+    interests: Optional[list[str]] = None,
     voice_id: Optional[str] = None,
 ):
     """Main Celery task picked up by the pipeline worker."""
@@ -205,6 +206,7 @@ def generate_video_task(
     logger.info("[worker] Character: %s", character)
     logger.info("[worker] Difficulty: %s", difficulty)
     logger.info("[worker] Prompt: %s", prompt or "(none)")
+    logger.info("[worker] Interests: %s", ", ".join(interests or []) or "(none)")
     logger.info("[worker] Extracted text: %d chars", len(extracted_text))
     logger.info("[worker] Extracted text preview: %.300s...", extracted_text)
     logger.info("[worker] Celery task ID: %s", self.request.id)
@@ -235,6 +237,7 @@ def generate_video_task(
             character=Character(character),
             difficulty=Difficulty(difficulty),
             user_prompt=prompt,
+            user_interests=interests,
         )
         step_elapsed = time.perf_counter() - step_t0
 

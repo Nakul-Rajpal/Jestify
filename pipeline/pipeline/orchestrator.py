@@ -16,7 +16,7 @@ import tempfile
 import threading
 import time
 import traceback
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -42,15 +42,18 @@ logger = logging.getLogger(__name__)
 
 StatusCallback = Callable[[JobStatus, int], None]
 
-MAX_RENDER_RETRIES = 4
-MAX_FAILED_SCENES_BEFORE_ABORT = 4
-_CODE_FIX_MODEL = "claude-sonnet-4-20250514"
-
 def _env_int(name: str, default: int) -> int:
     try:
         return max(1, int(os.getenv(name, str(default))))
     except Exception:
         return default
+
+
+MAX_RENDER_RETRIES = _env_int("MAX_RENDER_RETRIES", 4)
+MAX_FAILED_SCENES_BEFORE_ABORT = _env_int("MAX_FAILED_SCENES_BEFORE_ABORT", 4)
+RENDER_HEARTBEAT_SECONDS = _env_int("RENDER_HEARTBEAT_SECONDS", 10)
+RENDER_STALL_TIMEOUT_SECONDS = _env_int("RENDER_STALL_TIMEOUT_SECONDS", 240)
+_CODE_FIX_MODEL = "claude-sonnet-4-20250514"
 
 
 # Concurrency limits (configurable via env)
@@ -262,17 +265,40 @@ class PipelineOrchestrator:
                 for idx, scene in enumerate(scenes)
             }
 
-            # Collect render results
-            for future in as_completed(render_futures):
-                idx = render_futures[future]
-                try:
-                    clip_path = future.result()
-                    render_results[idx] = clip_path
-                except Exception as e:
-                    render_results[idx] = None
-                    render_errors[idx] = str(e)
-                completed_renders[0] += 1
-                _update_combined_progress()
+            # Collect render results with heartbeat and stall detection.
+            pending_render = set(render_futures.keys())
+            last_render_completion = time.perf_counter()
+            while pending_render:
+                done, pending_render = wait(
+                    pending_render,
+                    timeout=RENDER_HEARTBEAT_SECONDS,
+                    return_when=FIRST_COMPLETED,
+                )
+                if not done:
+                    idle_seconds = time.perf_counter() - last_render_completion
+                    logger.info(
+                        "[orchestrator] Render heartbeat: %d/%d scenes done, %.0fs since last completion",
+                        completed_renders[0], total_scenes, idle_seconds,
+                    )
+                    _update_combined_progress()
+                    if idle_seconds >= RENDER_STALL_TIMEOUT_SECONDS:
+                        raise RuntimeError(
+                            "Rendering appears stalled. No scene completed for "
+                            f"{int(idle_seconds)}s. Check Manim/FFmpeg and worker logs."
+                        )
+                    continue
+
+                for future in done:
+                    idx = render_futures[future]
+                    try:
+                        clip_path = future.result()
+                        render_results[idx] = clip_path
+                    except Exception as e:
+                        render_results[idx] = None
+                        render_errors[idx] = str(e)
+                    completed_renders[0] += 1
+                    last_render_completion = time.perf_counter()
+                    _update_combined_progress()
 
             # Collect voice results
             for future in as_completed(voice_futures):

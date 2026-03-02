@@ -51,7 +51,7 @@ export default function Home() {
   }, []);
 
   const handleSubmit = useCallback(
-    async (prompt: string, documentIds: string[]) => {
+    async (prompt: string, documentIds: string[], interests: string[]) => {
       if (!selectedCharacter || !selectedDifficulty) return;
 
       setIsGenerating(true);
@@ -63,6 +63,7 @@ export default function Home() {
           difficulty: selectedDifficulty,
           document_ids: documentIds,
           prompt: prompt || undefined,
+          interests: interests.length > 0 ? interests : undefined,
         });
         setCurrentJobId(response.job_id);
         setUploadedDocuments([]);

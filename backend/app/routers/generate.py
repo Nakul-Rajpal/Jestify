@@ -77,6 +77,7 @@ async def generate(
         character=request.character.value,
         difficulty=request.difficulty.value,
         prompt=request.prompt,
+        interests=request.interests or None,
         extracted_text=combined_text,
         voice_id=voice_id or None,
     )

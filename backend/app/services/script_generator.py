@@ -119,6 +119,52 @@ DIFFICULTY_INSTRUCTIONS: dict[Difficulty, str] = {
     ),
 }
 
+VISUAL_FIELD_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "physics": ("physics", "mechanics", "thermodynamics", "electromagnetism", "quantum", "relativity"),
+    "humanities": ("humanities", "history", "philosophy", "literature", "ethics", "sociology"),
+    "mathematics": ("math", "mathematics", "algebra", "calculus", "geometry", "statistics"),
+    "computer_science": ("computer science", "programming", "algorithms", "data structures", "software"),
+    "biology": ("biology", "genetics", "ecology", "anatomy", "physiology"),
+    "chemistry": ("chemistry", "organic", "inorganic", "molecule", "reaction"),
+    "economics": ("economics", "finance", "market", "trade", "policy"),
+}
+
+VISUAL_FIELD_PLAYBOOK: dict[str, str] = {
+    "physics": (
+        "- Physics visuals: vectors, force/body diagrams, wave plots, energy-level comparisons, "
+        "and before/after state transitions with units."
+    ),
+    "humanities": (
+        "- Humanities visuals: timelines, cause-effect chains, compare/contrast grids, "
+        "quote callouts, and stakeholder maps."
+    ),
+    "mathematics": (
+        "- Mathematics visuals: axes/plots, geometric constructions, equation transforms, "
+        "and stepwise symbolic progression."
+    ),
+    "computer_science": (
+        "- Computer science visuals: flowcharts, execution traces, data-structure states, "
+        "tree/graph traversals, and complexity comparison bars."
+    ),
+    "biology": (
+        "- Biology visuals: labeled process cycles, layered system diagrams, pathway flows, "
+        "and classification trees."
+    ),
+    "chemistry": (
+        "- Chemistry visuals: reaction pathways, molecular arrangement sketches, concentration "
+        "changes over time, and equilibrium comparisons."
+    ),
+    "economics": (
+        "- Economics visuals: supply-demand charts, policy timeline effects, tradeoff frontiers, "
+        "and comparative indicator bar/line charts."
+    ),
+}
+
+GENERIC_VISUAL_PLAYBOOK = (
+    "- Default visuals: concept map -> worked example -> comparison diagram -> summary table. "
+    "Favor diagrams and transformations over long text blocks."
+)
+
 # Built-in ManimCE reference so the LLM always has a baseline even if
 # Context7 is unavailable.
 MANIMCE_REFERENCE = r"""
@@ -349,6 +395,135 @@ class ScriptGenerator:
                 "Unset SSL_CERT_FILE/REQUESTS_CA_BUNDLE/CURL_CA_BUNDLE or install certifi."
             ) from exc
 
+    @staticmethod
+    def _normalize_interests(user_interests: Optional[list[str]]) -> list[str]:
+        """Trim, dedupe, and normalize user interests."""
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for value in user_interests or []:
+            item = (value or "").strip()
+            if not item:
+                continue
+            key = item.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(item)
+        return cleaned
+
+    @staticmethod
+    def _extract_interests_from_prompt(user_prompt: Optional[str]) -> list[str]:
+        """Best-effort extraction of interests from free-form prompt text."""
+        if not user_prompt:
+            return []
+
+        text = user_prompt.strip()
+        candidates: list[str] = []
+        patterns = (
+            r"(?:interests?|hobbies|analog(?:y|ies))\s*[:=-]\s*([^\n\.]+)",
+            r"(?:i\s*(?:am|'m)?\s*(?:into|interested in|like|love|enjoy)\s+)([^\n\.]+)",
+            r"(?:use|prefer)\s+([^\n\.]+?)\s+analog(?:y|ies)",
+        )
+
+        for pattern in patterns:
+            for match in re.findall(pattern, text, flags=re.IGNORECASE):
+                candidates.append(match)
+
+        if not candidates:
+            compact = text.strip()
+            if len(compact) <= 120 and any(token in compact for token in (",", "/", " and ", " & ")):
+                candidates.append(compact)
+
+        extracted: list[str] = []
+        seen: set[str] = set()
+        for chunk in candidates:
+            for part in re.split(r",|/|;| and | & |\n", chunk, flags=re.IGNORECASE):
+                cleaned = part.strip().strip(" .:-_\"'()[]{}")
+                if len(cleaned) < 2:
+                    continue
+                key = cleaned.lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                extracted.append(cleaned)
+
+        return extracted[:8]
+
+    @staticmethod
+    def _has_critical_narration_errors(
+        errors: list[str],
+        learning_context: dict | None = None,
+    ) -> bool:
+        """Return true when narration errors violate strict interest-analogy rules."""
+        context = learning_context or {}
+        if not context.get("use_interest_analogies_only"):
+            return False
+
+        critical_markers = (
+            "Scene 1 narration must open with an analogy",
+            "Scene 1 uses character-domain analogy phrases",
+        )
+        return any(any(marker in err for marker in critical_markers) for err in errors)
+
+    def _infer_visual_fields(self, text_blob: str) -> list[str]:
+        """Infer domain tags from assignment content for visual prompting."""
+        blob = (text_blob or "").lower()
+        if not blob:
+            return []
+
+        fields: list[str] = []
+        for field, keywords in VISUAL_FIELD_KEYWORDS.items():
+            if any(keyword in blob for keyword in keywords):
+                fields.append(field)
+        return fields
+
+    @staticmethod
+    def _build_visual_playbook(fields: list[str]) -> str:
+        """Build a compact visual strategy block for prompt injection."""
+        if not fields:
+            return GENERIC_VISUAL_PLAYBOOK
+
+        lines = [VISUAL_FIELD_PLAYBOOK[field] for field in fields if field in VISUAL_FIELD_PLAYBOOK]
+        return "\n".join(lines) if lines else GENERIC_VISUAL_PLAYBOOK
+
+    def _resolve_learning_context(
+        self,
+        personality,
+        extracted_text: str,
+        user_prompt: Optional[str],
+        user_interests: Optional[list[str]],
+    ) -> dict:
+        """Resolve analogy source and field-specific visual guidance."""
+        explicit_interests = self._normalize_interests(user_interests)
+        prompt_interests = self._extract_interests_from_prompt(user_prompt)
+        interests = explicit_interests or prompt_interests
+        use_interest_analogies_only = bool(interests)
+        interests_source = (
+            "explicit"
+            if explicit_interests
+            else "prompt-derived" if prompt_interests else "persona-default"
+        )
+        analogy_domain = ", ".join(interests) if interests else personality.analogy_domain
+        content_blob = f"{user_prompt or ''}\n{extracted_text[:12000]}"
+        visual_fields = self._infer_visual_fields(content_blob)
+        visual_source = "assignment-content"
+        if not visual_fields and interests:
+            visual_fields = self._infer_visual_fields(" ".join(interests))
+            visual_source = "interests-fallback" if visual_fields else "generic"
+        elif not visual_fields:
+            visual_source = "generic"
+        visual_playbook = self._build_visual_playbook(visual_fields)
+
+        return {
+            "interests": interests,
+            "interests_source": interests_source,
+            "analogy_domain": analogy_domain,
+            "use_interest_analogies_only": use_interest_analogies_only,
+            "visual_fields": visual_fields,
+            "visual_source": visual_source,
+            "visual_playbook": visual_playbook,
+        }
+
     # ──────────────────────────────────────────────────────────────────
     # Public entry point
     # ──────────────────────────────────────────────────────────────────
@@ -359,6 +534,7 @@ class ScriptGenerator:
         character: Character,
         difficulty: Difficulty,
         user_prompt: Optional[str] = None,
+        user_interests: Optional[list[str]] = None,
     ) -> GeneratedScript:
         logger.info("[script_gen] ┌─ Generating script (two-call architecture)")
         logger.info("[script_gen] │  Character: %s", character.value)
@@ -370,6 +546,27 @@ class ScriptGenerator:
         personality = CHARACTER_PERSONALITIES[character]
         difficulty_instruction = DIFFICULTY_INSTRUCTIONS[difficulty]
         dcfg = DIFFICULTY_CONFIGS[difficulty]
+        learning_context = self._resolve_learning_context(
+            personality,
+            extracted_text,
+            user_prompt,
+            user_interests,
+        )
+        logger.info(
+            "[script_gen] │  Analogy domain: %s (%s)",
+            learning_context["analogy_domain"],
+            "user-interests-only" if learning_context["use_interest_analogies_only"] else "character-default",
+        )
+        logger.info(
+            "[script_gen] │  Interest tags: %s (%s)",
+            ", ".join(learning_context["interests"]) or "(none)",
+            learning_context["interests_source"],
+        )
+        logger.info(
+            "[script_gen] │  Visual focus fields: %s (%s)",
+            ", ".join(learning_context["visual_fields"]) or "(general)",
+            learning_context["visual_source"],
+        )
         logger.info(
             "[script_gen] │  Difficulty config: %d scenes, %d-%ds/scene, target %d-%ds total",
             dcfg.target_scenes, dcfg.min_scene_seconds, dcfg.max_scene_seconds,
@@ -398,24 +595,48 @@ class ScriptGenerator:
         logger.info("[script_gen] │")
         logger.info("[script_gen] │  ── CALL 1: Narration ──")
         narration_data, narr_elapsed = self._generate_narration(
-            extracted_text, personality, difficulty_instruction, user_prompt, dcfg,
+            extracted_text, personality, difficulty_instruction, user_prompt, dcfg, learning_context,
         )
-        narration_errors = self._validate_narration(narration_data, personality, dcfg)
-        if narration_errors and not FAST_MODE:
+        narration_errors = self._validate_narration(
+            narration_data,
+            personality=personality,
+            dcfg=dcfg,
+            learning_context=learning_context,
+        )
+        should_retry_narration = bool(narration_errors) and (
+            not FAST_MODE
+            or self._has_critical_narration_errors(
+                narration_errors, learning_context,
+            )
+        )
+        if should_retry_narration:
             logger.warning("[script_gen] │  Narration issues: %s", narration_errors)
             feedback = (
                 "Regenerate the full JSON and fix ALL issues:\n- "
                 + "\n- ".join(narration_errors)
             )
-            narr_user = self._build_narration_user_message(extracted_text, user_prompt, dcfg)
+            narr_user = self._build_narration_user_message(
+                extracted_text, user_prompt, dcfg, learning_context,
+            )
             retry_msg = f"{narr_user}\n\n{feedback}"
-            narr_sys = self._build_narration_system_prompt(personality, difficulty_instruction, dcfg)
+            narr_sys = self._build_narration_system_prompt(
+                personality, difficulty_instruction, dcfg, learning_context,
+            )
             resp, retry_elapsed = self._request_script(narr_sys, retry_msg, max_tokens=4096)
             narr_elapsed += retry_elapsed
             narration_data = self._parse_response(resp)
-            remaining = self._validate_narration(narration_data, personality, dcfg)
+            remaining = self._validate_narration(
+                narration_data,
+                personality=personality,
+                dcfg=dcfg,
+                learning_context=learning_context,
+            )
             if remaining:
                 logger.warning("[script_gen] │  Narration issues remain: %s. Continuing.", remaining)
+                if self._has_critical_narration_errors(remaining, learning_context):
+                    raise ValueError(
+                        "Could not enforce user-interest analogies in narration output."
+                    )
 
         logger.info("[script_gen] │  Narration OK — %d scenes, title: %s",
                      len(narration_data.get("scenes", [])), narration_data.get("title"))
@@ -432,7 +653,9 @@ class ScriptGenerator:
         # ── Call 2: Generate ManimCE code (narration as input) ───────
         logger.info("[script_gen] │")
         logger.info("[script_gen] │  ── CALL 2: Code generation ──")
-        code_data, code_elapsed = self._generate_code(narration_data, live_docs, dcfg)
+        code_data, code_elapsed = self._generate_code(
+            narration_data, live_docs, dcfg, learning_context,
+        )
         code_errors = self._validate_code(code_data, dcfg)
         if code_errors:
             logger.warning("[script_gen] │  Code issues (non-blocking): %s", code_errors)
@@ -493,10 +716,15 @@ class ScriptGenerator:
         difficulty_instruction: str,
         user_prompt: Optional[str],
         dcfg: _DifficultyConfig,
+        learning_context: dict,
     ) -> tuple[dict, float]:
         """Call 1: generate narration script only (no Manim code)."""
-        sys_prompt = self._build_narration_system_prompt(personality, difficulty_instruction, dcfg)
-        user_msg = self._build_narration_user_message(extracted_text, user_prompt, dcfg)
+        sys_prompt = self._build_narration_system_prompt(
+            personality, difficulty_instruction, dcfg, learning_context,
+        )
+        user_msg = self._build_narration_user_message(
+            extracted_text, user_prompt, dcfg, learning_context,
+        )
         logger.info("[script_gen] │  Narration system prompt: %d chars", len(sys_prompt))
         logger.info("[script_gen] │  Narration user message: %d chars", len(user_msg))
         # Scale max_tokens with scene count
@@ -506,8 +734,31 @@ class ScriptGenerator:
         return self._parse_response(resp), elapsed
 
     def _build_narration_system_prompt(
-        self, personality, difficulty_instruction: str, dcfg: _DifficultyConfig,
+        self,
+        personality,
+        difficulty_instruction: str,
+        dcfg: _DifficultyConfig,
+        learning_context: dict,
     ) -> str:
+        analogy_domain = learning_context["analogy_domain"]
+        interests = learning_context["interests"]
+        use_interest_analogies_only = bool(learning_context["use_interest_analogies_only"])
+        visual_playbook = learning_context["visual_playbook"]
+        interests_line = ", ".join(interests) if interests else "None provided"
+        analogy_rule = (
+            "1. ANALOGY HOOK (Scene 0 ONLY): Open Scene 0 with a vivid analogy from the "
+            f"user's interests ({analogy_domain}). Do NOT use analogies from the character's "
+            "default universe if user interests are provided. After Scene 0, DROP the "
+            "extended analogy and teach the content directly.\n"
+            "1b. THROUGHOUT SCRIPT: You may use short callback analogies in later scenes, "
+            "but ONLY from the same user-interest set. Never switch to persona-domain analogies."
+            if use_interest_analogies_only
+            else
+            "1. ANALOGY HOOK (Scene 0 ONLY): Open Scene 0 with a vivid analogy from the "
+            f"character's world ({analogy_domain}). After Scene 0, DROP the extended analogy "
+            "and teach the actual content directly."
+        )
+
         return f"""\
 You are an expert educational script writer. You write narration scripts for \
 animated educational videos — like 3Blue1Brown but voiced by a specific character.
@@ -520,18 +771,15 @@ CHARACTER PERSONA:
 - Name: {personality.display_name}
 - Tone: {personality.tone}
 - Catchphrases: {', '.join(personality.catchphrases)}
-- Analogy Domain: {personality.analogy_domain}
+- Analogy Domain: {analogy_domain}
+- User Interests: {interests_line}
 - Background: {personality.background}
 
 Write narration in this character's voice. Use their catchphrases naturally. \
 The audience should FEEL like {personality.display_name} is personally teaching them.
 
 === NARRATION RULES (MANDATORY) ===
-1. ANALOGY HOOK (Scene 0 ONLY): Open Scene 0 with a vivid analogy from the \
-   character's world ({personality.analogy_domain}). For example, if the character \
-   is a basketball player teaching derivatives: "Think of derivatives like reading \
-   a defense — you need to see what's changing and react in real time."
-   After Scene 0, DROP the extended analogy — teach the actual content directly.
+{analogy_rule}
 
 2. CONTINUOUS FLOW: Narration must flow as a continuous lecture. Each scene picks \
    up where the previous left off. Use transition phrases like "Now that we \
@@ -567,11 +815,15 @@ The audience should FEEL like {personality.display_name} is personally teaching 
    The visual_description guides the animation generator to create visuals that \
    are synchronized with the narration.
 
+8. FIELD-SPECIFIC VISUALS: Prioritize visuals from this playbook:
+{visual_playbook}
+The playbook is inferred from assignment content, not user interests.
+
 DIFFICULTY: {difficulty_instruction}
 
 === VIDEO STRUCTURE (MANDATORY) ===
 - Generate exactly {dcfg.target_scenes} scenes for a video totaling about {dcfg.total_min_seconds} to {dcfg.total_max_seconds} seconds.
-- Scene 0: Concept introduction ({dcfg.min_scene_seconds}-{dcfg.max_scene_seconds}s) — hook with character analogy + key concepts
+- Scene 0: Concept introduction ({dcfg.min_scene_seconds}-{dcfg.max_scene_seconds}s) — hook with selected analogy domain + key concepts
 - Scene 1 or 2: GRAPH SCENE (MANDATORY) — describe a graph/plot that visualizes a \
   function, trend, or relationship. Set manim_scene_type="graph". \
   Even non-math topics can have graphs: growth rates, timelines, comparisons.
@@ -603,10 +855,18 @@ Respond with ONLY valid JSON (no markdown fences, no extra text):
 """
 
     def _build_narration_user_message(
-        self, extracted_text: str, user_prompt: Optional[str],
+        self,
+        extracted_text: str,
+        user_prompt: Optional[str],
         dcfg: _DifficultyConfig | None = None,
+        learning_context: dict | None = None,
     ) -> str:
         cfg = dcfg or DIFFICULTY_CONFIGS[Difficulty.BEGINNER]
+        context = learning_context or {}
+        interests = context.get("interests", [])
+        use_interest_analogies_only = bool(context.get("use_interest_analogies_only"))
+        analogy_domain = context.get("analogy_domain", "")
+        visual_playbook = context.get("visual_playbook", GENERIC_VISUAL_PLAYBOOK)
         message = f"""\
 Write a concise narration script with exactly {cfg.target_scenes} scenes based on this source material.
 Analyze the material carefully — identify the key concepts, relationships, \
@@ -632,14 +892,36 @@ progressively — Scene 0 introduces, each next scene advances to the next conce
 NEVER re-explain something already covered in a previous scene. If you run out of \
 source material, go deeper (examples, applications) rather than repeating.
 """
+        if interests:
+            message += (
+                "\nANALOGY SOURCE LOCK:\n"
+                f"- User interests: {', '.join(interests)}\n"
+            )
+            if use_interest_analogies_only:
+                message += (
+                    f"- Scene 0 analogy must come ONLY from this set ({analogy_domain}).\n"
+                    "- Any analogy in later scenes must also come from this same set.\n"
+                    "- Do NOT use the character's default analogy domain.\n"
+                )
+        message += (
+            "\nVISUAL PLAYBOOK (from assignment content):\n"
+            f"{visual_playbook}\n"
+        )
         if user_prompt:
             message += f"\nAdditional instructions: {user_prompt}\n"
         message += "\nRespond with ONLY the JSON object. No markdown fences."
         return message
 
-    def _validate_narration(self, script_data: dict, personality=None, dcfg: "_DifficultyConfig | None" = None) -> list[str]:
+    def _validate_narration(
+        self,
+        script_data: dict,
+        personality=None,
+        dcfg: "_DifficultyConfig | None" = None,
+        learning_context: dict | None = None,
+    ) -> list[str]:
         """Validate narration-only output from Call 1."""
         cfg = dcfg or DIFFICULTY_CONFIGS[Difficulty.BEGINNER]
+        context = learning_context or {}
         errors: list[str] = []
         scenes = script_data.get("scenes") or []
         if len(scenes) < cfg.target_scenes:
@@ -659,19 +941,47 @@ source material, go deeper (examples, applications) rather than repeating.
                     f"Scene {idx+1} narration_text too long ({word_count} words). "
                     f"Keep each scene to {cfg.min_words_per_scene}-{cfg.max_words_per_scene} words."
                 )
-            if idx == 0 and personality and hasattr(personality, "analogy_domain"):
-                domain_phrases = personality.analogy_domain.lower().split(", ")
+            if idx == 0:
+                domain_text = ""
+                source_label = "selected domain"
+                if context.get("use_interest_analogies_only") and context.get("interests"):
+                    domain_text = ", ".join(context.get("interests", []))
+                    source_label = "user interests"
+                elif personality and hasattr(personality, "analogy_domain"):
+                    domain_text = personality.analogy_domain
+                    source_label = f"character domain ({personality.display_name})"
+
+                domain_phrases = domain_text.lower().split(", ") if domain_text else []
                 domain_words: set[str] = set()
                 for phrase in domain_phrases:
                     domain_words.add(phrase)
                     domain_words.update(phrase.split())
                 narration_lower = narration.lower()
-                if not any(kw in narration_lower for kw in domain_words):
+                if domain_words and not any(kw in narration_lower for kw in domain_words):
                     errors.append(
-                        f"Scene 1 narration must open with an analogy from the character's "
-                        f"domain ({personality.analogy_domain}). Use a hook that connects "
-                        f"the topic to {personality.display_name}'s world."
+                        "Scene 1 narration must open with an analogy from the "
+                        f"{source_label}: {domain_text}."
                     )
+                if context.get("use_interest_analogies_only") and personality and hasattr(personality, "analogy_domain"):
+                    persona_phrases = [
+                        phrase.strip().lower()
+                        for phrase in personality.analogy_domain.split(",")
+                        if phrase.strip()
+                    ]
+                    interest_phrases = {
+                        phrase.strip().lower()
+                        for phrase in context.get("interests", [])
+                        if phrase.strip()
+                    }
+                    violating_persona_phrases = [
+                        phrase for phrase in persona_phrases
+                        if phrase not in interest_phrases and phrase in narration_lower
+                    ]
+                    if violating_persona_phrases:
+                        errors.append(
+                            "Scene 1 uses character-domain analogy phrases while interests are locked: "
+                            + ", ".join(violating_persona_phrases[:3])
+                        )
 
         # ── Content repetition check ──
         # Extract significant phrases (4+ word n-grams) from each scene and
@@ -751,18 +1061,23 @@ source material, go deeper (examples, applications) rather than repeating.
     # ──────────────────────────────────────────────────────────────────
 
     def _generate_code(
-        self, narration_data: dict, live_manim_docs: str, dcfg: "_DifficultyConfig | None" = None,
+        self,
+        narration_data: dict,
+        live_manim_docs: str,
+        dcfg: "_DifficultyConfig | None" = None,
+        learning_context: dict | None = None,
     ) -> tuple[dict, float]:
         """Call 2: generate ManimCE code. Anthropic=parallel, Ollama=sequential."""
         cfg = dcfg or DIFFICULTY_CONFIGS[Difficulty.BEGINNER]
+        context = learning_context or {}
         scenes = narration_data.get("scenes", [])
         title = narration_data.get("title", "Untitled")
 
         if CODE_PROVIDER == "ollama":
-            return self._generate_code_ollama(scenes, cfg)
+            return self._generate_code_ollama(scenes, cfg, context)
 
         # ── Anthropic path: parallel per-scene calls ──
-        sys_prompt = self._build_code_system_prompt(live_manim_docs, cfg)
+        sys_prompt = self._build_code_system_prompt(live_manim_docs, cfg, context)
         logger.info(
             "[script_gen] │  Code provider: anthropic, model: %s (parallel, %d scenes)",
             CODE_MODEL, len(scenes),
@@ -781,7 +1096,12 @@ source material, go deeper (examples, applications) rather than repeating.
             prev_scene = scene_by_idx.get(idx - 1)
             next_scene = scene_by_idx.get(idx + 1)
             user_msg = self._build_single_scene_user_message(
-                scene_data, title, cfg, prev_scene=prev_scene, next_scene=next_scene,
+                scene_data,
+                title,
+                cfg,
+                prev_scene=prev_scene,
+                next_scene=next_scene,
+                learning_context=context,
             )
             resp_text, _ = self._request_code(sys_prompt, user_msg, max_tokens=4096)
             parsed = self._parse_response(resp_text)
@@ -816,9 +1136,13 @@ source material, go deeper (examples, applications) rather than repeating.
         return {"scenes": ordered_scenes}, elapsed
 
     def _generate_code_ollama(
-        self, scenes: list[dict], dcfg: "_DifficultyConfig",
+        self,
+        scenes: list[dict],
+        dcfg: "_DifficultyConfig",
+        learning_context: dict | None = None,
     ) -> tuple[dict, float]:
         """Generate ManimCE code via Ollama — sequential calls with simplified prompts."""
+        context = learning_context or {}
         logger.info(
             "[script_gen] │  Code provider: ollama, model: %s (sequential, %d scenes)",
             OLLAMA_CODE_MODEL, len(scenes),
@@ -837,7 +1161,7 @@ source material, go deeper (examples, applications) rather than repeating.
 
             try:
                 code, elapsed_one = self._request_code_ollama(
-                    idx, narration, visual, stype, dur,
+                    idx, narration, visual, stype, dur, context,
                 )
                 results[idx] = {"scene_index": idx, "manim_code": code}
                 logger.info(
@@ -857,8 +1181,17 @@ source material, go deeper (examples, applications) rather than repeating.
         ordered_scenes = [results[i] for i in sorted(results.keys())]
         return {"scenes": ordered_scenes}, elapsed
 
-    def _build_code_system_prompt(self, live_manim_docs: str = "", dcfg: "_DifficultyConfig | None" = None) -> str:
+    def _build_code_system_prompt(
+        self,
+        live_manim_docs: str = "",
+        dcfg: "_DifficultyConfig | None" = None,
+        learning_context: dict | None = None,
+    ) -> str:
         cfg = dcfg or DIFFICULTY_CONFIGS[Difficulty.BEGINNER]
+        context = learning_context or {}
+        visual_playbook = context.get("visual_playbook", GENERIC_VISUAL_PLAYBOOK)
+        user_interests = context.get("interests", [])
+        interest_line = ", ".join(user_interests) if user_interests else "None provided"
         live_docs_section = ""
         if live_manim_docs:
             live_docs_section = f"""
@@ -888,6 +1221,13 @@ at that exact moment in the animation.
 5. When the narrator says "look at this graph", the graph should be appearing.
 6. When the narrator says "notice how X changes", X should be animating.
 7. Match the total animation duration to duration_hint_seconds for each scene.
+
+=== VISUAL DOMAIN CONTEXT ===
+User interests: {interest_line}
+Visual playbook:
+{visual_playbook}
+Use these patterns to improve visual quality for domain-specific content.
+The visual playbook is based on assignment subject matter; interests are for analogy flavor.
 
 {MANIMCE_REFERENCE}
 {live_docs_section}
@@ -1017,11 +1357,18 @@ Respond with ONLY the JSON object. No markdown fences.
 """
 
     def _build_single_scene_user_message(
-        self, scene_data: dict, title: str, dcfg: "_DifficultyConfig | None" = None,
+        self,
+        scene_data: dict,
+        title: str,
+        dcfg: "_DifficultyConfig | None" = None,
         prev_scene: dict | None = None, next_scene: dict | None = None,
+        learning_context: dict | None = None,
     ) -> str:
         """Build a user message for a single scene's code generation."""
         cfg = dcfg or DIFFICULTY_CONFIGS[Difficulty.BEGINNER]
+        context = learning_context or {}
+        visual_playbook = context.get("visual_playbook", GENERIC_VISUAL_PLAYBOOK)
+        interest_line = ", ".join(context.get("interests", [])) or "None provided"
         idx = scene_data.get("scene_index", 0)
         dur = scene_data.get("duration_hint_seconds", 30)
         stype = scene_data.get("manim_scene_type", "custom")
@@ -1063,6 +1410,9 @@ Generate ManimCE code for Scene {idx} of the video "{title}".
 SCENE {idx} ({dur}s, {stype}):
 Narration: "{narration}"
 Visual description: "{visual}"
+User interests: {interest_line}
+Visual playbook: {visual_playbook}
+Use the playbook for assignment-domain visuals; keep interests as analogy flavor only.
 {scene_type_hint}{context_block}
 REQUIREMENTS:
 1. Complete, runnable ManimCE code with class Scene{idx:03d}(MovingCameraScene)
@@ -1111,10 +1461,18 @@ No markdown fences.
     # ──────────────────────────────────────────────────────────────────
 
     def _request_code_ollama(
-        self, scene_index: int, narration: str, visual_desc: str,
-        scene_type: str, duration: int,
+        self,
+        scene_index: int,
+        narration: str,
+        visual_desc: str,
+        scene_type: str,
+        duration: int,
+        learning_context: dict | None = None,
     ) -> tuple[str, float]:
         """Call local Ollama with a short, focused prompt the model can handle."""
+        context = learning_context or {}
+        visual_playbook = context.get("visual_playbook", GENERIC_VISUAL_PLAYBOOK)
+        interest_line = ", ".join(context.get("interests", [])) or "None provided"
         # The manim-finetuned model works best with simple, direct prompts
         type_hint = ""
         if scene_type == "graph":
@@ -1132,6 +1490,9 @@ The animation should visualize: {visual_desc}
 Rules:
 - Start with: from manim import *
 - import numpy as np
+- User interests: {interest_line}
+- Follow visual playbook: {visual_playbook}
+- Visual playbook follows assignment domain; interests are analogy flavor only.
 - Use Text() for all text (never MathTex or Tex). Use Unicode for math symbols.
 - Use Create() not ShowCreation(). Use axes.plot() not get_graph().
 - Keep content within safe zone: x in [-6,6], y in [-3.2,3.2]

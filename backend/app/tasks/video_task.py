@@ -56,6 +56,7 @@ def generate_video_task(
     difficulty: str,
     extracted_text: str,
     prompt: Optional[str] = None,
+    interests: Optional[list[str]] = None,
     voice_id: Optional[str] = None,
 ) -> dict:
     """Main Celery task that orchestrates the video generation pipeline."""
@@ -67,6 +68,7 @@ def generate_video_task(
     logger.info("[video_task] Character: %s", character)
     logger.info("[video_task] Difficulty: %s", difficulty)
     logger.info("[video_task] Prompt: %s", prompt or "(none)")
+    logger.info("[video_task] Interests: %s", ", ".join(interests or []) or "(none)")
     logger.info("[video_task] Extracted text: %d chars", len(extracted_text))
     logger.info("[video_task] Extracted text preview: %.300s...", extracted_text)
     logger.info("[video_task] Celery task ID: %s", self.request.id)
@@ -90,6 +92,7 @@ def generate_video_task(
             character=Character(character),
             difficulty=Difficulty(difficulty),
             user_prompt=prompt,
+            user_interests=interests,
         )
         step_elapsed = time.perf_counter() - step_t0
 

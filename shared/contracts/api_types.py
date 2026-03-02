@@ -10,6 +10,7 @@ class GenerateRequest(BaseModel):
     difficulty: Difficulty
     document_ids: List[str]
     prompt: Optional[str] = None
+    interests: Optional[List[str]] = None
     voice_id: Optional[str] = None
 
 

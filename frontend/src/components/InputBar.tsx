@@ -5,7 +5,7 @@ import { UploadedDocument } from "@/types";
 import DocumentUpload, { ACCEPTED_TYPES } from "./DocumentUpload";
 
 interface InputBarProps {
-  onSubmit: (prompt: string, documentIds: string[]) => void;
+  onSubmit: (prompt: string, documentIds: string[], interests: string[]) => void;
   onUpload: (file: File) => Promise<UploadedDocument | null>;
   uploadedDocs: UploadedDocument[];
   onRemoveDoc: (docId: string) => void;
@@ -24,14 +24,26 @@ export default function InputBar({
   disabled,
 }: InputBarProps) {
   const [prompt, setPrompt] = useState("");
+  const [interestInput, setInterestInput] = useState("");
   const [isDragOver, setIsDragOver] = useState(false);
   const dragCounterRef = useRef(0);
+
+  const parseInterests = (input: string): string[] =>
+    Array.from(
+      new Set(
+        input
+          .split(/[,\n]/)
+          .map((value) => value.trim())
+          .filter((value) => value.length > 0)
+      )
+    ).slice(0, 8);
 
   const handleSubmit = () => {
     if (disabled || isGenerating) return;
     const documentIds = uploadedDocs.map((doc) => doc.id);
+    const interests = parseInterests(interestInput);
     if (documentIds.length === 0 && !prompt.trim()) return;
-    onSubmit(prompt.trim(), documentIds);
+    onSubmit(prompt.trim(), documentIds, interests);
     setPrompt("");
   };
 
@@ -172,25 +184,34 @@ export default function InputBar({
             disabled={disabled}
           />
 
-          <textarea
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={
-              disabled
-                ? "Select a character to get started"
-                : "Describe what you want to learn..."
-            }
-            disabled={disabled || isGenerating}
-            rows={1}
-            className={`flex-1 bg-transparent text-white placeholder:text-white/60 resize-none outline-none text-sm leading-6 max-h-32 min-h-[24px] ${prompt.length === 0 ? "text-center" : "text-left"}`}
-            style={{ height: "24px" }}
-            onInput={(e) => {
-              const target = e.target as HTMLTextAreaElement;
-              target.style.height = "24px";
-              target.style.height = `${Math.min(target.scrollHeight, 128)}px`;
-            }}
-          />
+          <div className="flex-1 min-w-0">
+            <textarea
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder={
+                disabled
+                  ? "Select a character to get started"
+                  : "Describe what you want to learn..."
+              }
+              disabled={disabled || isGenerating}
+              rows={1}
+              className={`w-full bg-transparent text-white placeholder:text-white/60 resize-none outline-none text-sm leading-6 max-h-32 min-h-[24px] ${prompt.length === 0 ? "text-center" : "text-left"}`}
+              style={{ height: "24px" }}
+              onInput={(e) => {
+                const target = e.target as HTMLTextAreaElement;
+                target.style.height = "24px";
+                target.style.height = `${Math.min(target.scrollHeight, 128)}px`;
+              }}
+            />
+            <input
+              value={interestInput}
+              onChange={(e) => setInterestInput(e.target.value)}
+              disabled={disabled || isGenerating}
+              placeholder="Interests for analogies (comma-separated): physics, humanities, economics..."
+              className="mt-1.5 w-full bg-transparent text-xs text-fuchsia-100 placeholder:text-fuchsia-100/60 outline-none"
+            />
+          </div>
 
           <button
             onClick={handleSubmit}

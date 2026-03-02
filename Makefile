@@ -1,6 +1,11 @@
 .PHONY: dev dev-frontend dev-backend dev-worker setup-frontend setup-backend setup-pipeline docker-up docker-down
 
-PYTHON ?= python3.13
+VENV_PYTHON := $(CURDIR)/.venv/bin/python
+ifeq ($(wildcard $(VENV_PYTHON)),)
+PYTHON ?= python3
+else
+PYTHON ?= $(VENV_PYTHON)
+endif
 
 # Start all services via Docker
 docker-up:
@@ -36,7 +41,7 @@ setup: setup-frontend setup-backend setup-pipeline
 
 # Database
 db-migrate:
-	cd backend && alembic upgrade head
+	cd backend && $(PYTHON) -m alembic upgrade head
 
 db-revision:
-	cd backend && alembic revision --autogenerate -m "$(msg)"
+	cd backend && $(PYTHON) -m alembic revision --autogenerate -m "$(msg)"

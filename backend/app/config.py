@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     FISH_VOICE_ID_TAYLOR: str = ""
     CONTEXT7_API_KEY: str = ""
     DOCUMENT_EXTRACT_TIMEOUT_SECONDS: int = 30
+    JOB_QUEUE_WARNING_SECONDS: int = 45
+    JOB_QUEUE_FAIL_SECONDS: int = 300
     STORAGE_PATH: str = str(PROJECT_ROOT / "storage")
     CORS_ORIGINS: List[str] = ["http://localhost:3000"]
 
