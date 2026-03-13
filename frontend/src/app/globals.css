@@ -1,38 +1,58 @@
 @import "tailwindcss";
 
 :root {
-  --background: #F4F2EE;
-  --foreground: #0a0a0a;
-  --accent: #E07B2A;
-  --charcoal: #1C1C1C;
+  --bg-primary: #0D0B1A;
+  --bg-secondary: #1A1730;
+  --bg-card: #1E1B2E;
+  --bg-elevated: #252240;
+  --accent-yellow: #FACC15;
+  --accent-yellow-hover: #FDE047;
+  --accent-yellow-muted: rgba(250, 204, 21, 0.15);
+  --accent-purple: #A855F7;
+  --accent-purple-muted: rgba(168, 85, 247, 0.15);
+  --text-primary: #F5F5F7;
+  --text-secondary: #A8A3C0;
+  --text-muted: #6B6589;
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-card: rgba(255, 255, 255, 0.12);
+  --border-hover: rgba(168, 85, 247, 0.4);
+  --success: #22C55E;
+  --error: #EF4444;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-instrument-sans), "Instrument Sans", system-ui, sans-serif;
-  --font-serif: var(--font-instrument-serif), "Instrument Serif", Georgia, serif;
+  --color-background: var(--bg-primary);
+  --color-foreground: var(--text-primary);
+  --font-sans: var(--font-poppins), "Poppins", system-ui, sans-serif;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: var(--font-instrument-sans), system-ui, sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-poppins), "Poppins", system-ui, sans-serif;
 }
 
-/* ── Glassmorphism ── */
-.glass {
-  background: rgba(255, 255, 255, 0.7);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.5);
+/* ── Card System ── */
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-card);
+  border-radius: 1rem;
 }
 
-.glass-dark {
-  background: rgba(10, 10, 10, 0.85);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+.card-elevated {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-card);
+  border-radius: 1.5rem;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+}
+
+/* ── Glow Effects ── */
+.glow-yellow {
+  box-shadow: 0 0 20px rgba(250, 204, 21, 0.25), 0 0 4px rgba(250, 204, 21, 0.4);
+}
+
+.glow-purple {
+  box-shadow: 0 0 20px rgba(168, 85, 247, 0.25), 0 0 4px rgba(168, 85, 247, 0.4);
 }
 
 /* ── Animations ── */
@@ -41,14 +61,25 @@ body {
   100% { transform: translateX(-50%); }
 }
 
-@keyframes float {
-  0%, 100% { transform: translateY(0); }
-  50%       { transform: translateY(-20px); }
+@keyframes pulse-yellow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(250, 204, 21, 0.4); }
+  50% { box-shadow: 0 0 0 8px rgba(250, 204, 21, 0); }
 }
 
-@keyframes float-delayed {
-  0%, 100% { transform: translateY(0); }
-  50%       { transform: translateY(-20px); }
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes flutter {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  25% { transform: translateY(-6px) rotate(1deg); }
+  75% { transform: translateY(4px) rotate(-1deg); }
 }
 
 .animate-marquee {
@@ -56,18 +87,30 @@ body {
   display: inline-block;
 }
 
-.animate-float {
-  animation: float 8s ease-in-out infinite;
+.animate-pulse-yellow {
+  animation: pulse-yellow 2s ease-in-out infinite;
 }
 
-.animate-float-delayed {
-  animation: float 8s ease-in-out 4s infinite;
+.animate-pulse-dot {
+  animation: pulse-dot 1.5s ease-in-out infinite;
+}
+
+.animate-slide-up {
+  animation: slide-up 0.5s ease-out forwards;
+}
+
+.animate-flutter {
+  animation: flutter 6s ease-in-out infinite;
+}
+
+.animate-flutter-delayed {
+  animation: flutter 6s ease-in-out 3s infinite;
 }
 
 /* ── Selection ── */
 ::selection {
-  background: #E07B2A;
-  color: white;
+  background: var(--accent-yellow);
+  color: #0D0B1A;
 }
 
 /* ── Scrollbar ── */
@@ -78,51 +121,11 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #ccc;
+  background: #3a3558;
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #aaa;
-}
-
-/* ── Legacy dark-theme utilities (kept for backward compat) ── */
-.purple-gradient-stage {
-  position: relative;
-  isolation: isolate;
-}
-
-.liquid-glass-card {
-  position: relative;
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  background: linear-gradient(155deg, rgba(255,103,214,0.2) 0%, rgba(226,82,255,0.14) 46%, rgba(56,21,96,0.2) 100%);
-  backdrop-filter: blur(22px) saturate(150%);
-  -webkit-backdrop-filter: blur(22px) saturate(150%);
-  box-shadow: 0 12px 40px rgba(110,25,150,0.28), inset 0 1px 0 rgba(255,255,255,0.26), inset 0 -1px 0 rgba(255,255,255,0.08);
-}
-
-.liquid-glass-toolbar {
-  border: 1px solid rgba(255, 255, 255, 0.26);
-  background: linear-gradient(135deg, rgba(255,103,214,0.32) 0%, rgba(226,82,255,0.24) 52%, rgba(47,18,88,0.34) 100%);
-  backdrop-filter: blur(26px) saturate(160%);
-  -webkit-backdrop-filter: blur(26px) saturate(160%);
-  box-shadow: 0 18px 50px rgba(123,29,180,0.36), inset 0 1px 0 rgba(255,255,255,0.32), inset 0 -1px 0 rgba(255,255,255,0.1);
-}
-
-.liquid-glass-pill {
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  background: linear-gradient(145deg, rgba(255,103,214,0.2), rgba(226,82,255,0.14));
-  backdrop-filter: blur(16px) saturate(145%);
-  -webkit-backdrop-filter: blur(16px) saturate(145%);
-}
-
-.neo-grotesk-wordmark {
-  margin-top: 0.35rem;
-  font-size: clamp(2.8rem, 8.6vw, 5.4rem);
-  font-weight: 750;
-  line-height: 0.9;
-  letter-spacing: -0.02em;
-  text-transform: uppercase;
-  color: rgba(251, 247, 255, 0.99);
+  background: #4a4570;
 }
 
 textarea {

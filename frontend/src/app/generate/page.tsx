@@ -100,12 +100,12 @@ export default function GeneratePage() {
   const showVideo = status === JobStatus.COMPLETED && Boolean(videoUrl);
 
   return (
-    <main className="min-h-screen bg-[#090510] text-white pb-44">
+    <main className="min-h-screen bg-[#0D0B1A] text-[#F5F5F7] pb-44">
       <section className="max-w-5xl mx-auto px-4 sm:px-6 pt-10 pb-10">
         <div className="flex items-center justify-between gap-3 mb-10">
           <Link
             href="/"
-            className="inline-flex items-center gap-2 text-sm text-white/70 hover:text-white transition-colors"
+            className="inline-flex items-center gap-2 text-sm text-[#A8A3C0] hover:text-white transition-colors"
           >
             <svg
               className="w-4 h-4"
@@ -121,21 +121,21 @@ export default function GeneratePage() {
             </svg>
             Back to landing page
           </Link>
-          <span className="text-xs uppercase tracking-[0.18em] text-fuchsia-200/80">
+          <span className="text-xs uppercase tracking-[0.18em] text-[#FACC15]/80">
             Video Generation
           </span>
         </div>
 
-        <div className="liquid-glass-card rounded-3xl border border-white/15 p-6 sm:p-8 mb-8">
-          <h1 className="font-serif text-4xl sm:text-5xl leading-tight mb-3">
+        <div className="card-elevated rounded-3xl border border-white/12 p-6 sm:p-8 mb-8">
+          <h1 className="font-extrabold text-4xl sm:text-5xl leading-tight mb-3">
             Build your lesson video
           </h1>
-          <p className="text-white/75 mb-8 max-w-2xl">
+          <p className="text-[#A8A3C0] mb-8 max-w-2xl">
             Pick a character, choose depth, upload your source content, and generate a narrated lesson.
           </p>
 
           <div className="mb-8">
-            <p className="text-xs uppercase tracking-[0.15em] text-fuchsia-200/80 mb-3">Step 1</p>
+            <p className="text-xs uppercase tracking-[0.15em] text-[#FACC15]/80 mb-3">Step 1</p>
             <CharacterSelector
               selected={selectedCharacter}
               onSelect={(character) => {
@@ -147,7 +147,7 @@ export default function GeneratePage() {
           </div>
 
           <div>
-            <p className="text-xs uppercase tracking-[0.15em] text-fuchsia-200/80 mb-3">Step 2</p>
+            <p className="text-xs uppercase tracking-[0.15em] text-[#FACC15]/80 mb-3">Step 2</p>
             <DifficultySelector
               selected={selectedDifficulty}
               onSelect={setSelectedDifficulty}
@@ -156,23 +156,23 @@ export default function GeneratePage() {
           </div>
         </div>
 
-        <div className="liquid-glass-card rounded-3xl border border-white/15 p-6 sm:p-8 mb-8">
-          <p className="text-xs uppercase tracking-[0.15em] text-fuchsia-200/80 mb-2">Step 3</p>
-          <h2 className="text-2xl font-serif mb-2">Add your document and generate</h2>
-          <p className="text-sm text-white/70 mb-3">
+        <div className="card-elevated rounded-3xl border border-white/12 p-6 sm:p-8 mb-8">
+          <p className="text-xs uppercase tracking-[0.15em] text-[#FACC15]/80 mb-2">Step 3</p>
+          <h2 className="text-2xl font-bold mb-2">Add your document and generate</h2>
+          <p className="text-sm text-[#A8A3C0] mb-3">
             Upload at least one source file, then describe what you want to learn.
           </p>
 
           {!selectedCharacter && (
-            <p className="text-sm text-amber-300/90">
+            <p className="text-sm text-[#FACC15]/90">
               Select a character first to unlock generation.
             </p>
           )}
         </div>
 
-        <div className="liquid-glass-card rounded-3xl border border-white/15 p-6 sm:p-8 min-h-[280px]">
+        <div className="card-elevated rounded-3xl border border-white/12 p-6 sm:p-8 min-h-[280px]">
           {isSubmitting && (
-            <p className="text-sm text-blue-300 mb-4">Starting your generation job...</p>
+            <p className="text-sm text-[#A855F7] mb-4">Starting your generation job...</p>
           )}
 
           {activeError && (
@@ -200,7 +200,7 @@ export default function GeneratePage() {
           )}
 
           {!showStatus && !showVideo && !isSubmitting && (
-            <p className="text-sm text-white/70">
+            <p className="text-sm text-[#6B6589]">
               Your generation status will appear here once you submit.
             </p>
           )}

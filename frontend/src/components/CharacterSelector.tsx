@@ -62,8 +62,8 @@ export default function CharacterSelector({
                 [perspective:1200px]
                 ${
                   isSelected
-                    ? "scale-[1.02] shadow-[0_0_0_1px_rgba(252,196,255,0.6),0_0_28px_rgba(230,116,255,0.65),0_22px_46px_rgba(214,90,255,0.55)]"
-                    : "hover:shadow-[0_18px_42px_rgba(214,90,255,0.5)]"
+                    ? "scale-[1.02] shadow-[0_0_0_1px_rgba(250,204,21,0.6),0_0_28px_rgba(250,204,21,0.45),0_22px_46px_rgba(168,85,247,0.35)]"
+                    : "hover:shadow-[0_18px_42px_rgba(168,85,247,0.4)]"
                 }
                 ${disabled ? "opacity-50 cursor-not-allowed" : ""}
               `}
@@ -74,25 +74,25 @@ export default function CharacterSelector({
                   transition-[transform,border-color,box-shadow] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]
                   will-change-transform
                   [transform-style:preserve-3d]
-                  ${isSelected ? "border-fuchsia-100/95" : "border-white/20 group-hover:border-fuchsia-100/85"}
+                  ${isSelected ? "border-[#FACC15]/80" : "border-white/20 group-hover:border-[#A855F7]/60"}
                   ${!disabled ? "group-hover:[transform:rotateY(180deg)]" : ""}
                 `}
               >
                 {/* Front */}
                 <div className="absolute inset-0 rounded-2xl [backface-visibility:hidden] overflow-hidden">
                   <div
-                    className={`absolute inset-0 backdrop-blur-[18px] ${
+                    className={`absolute inset-0 ${
                       isSelected
-                        ? "bg-[linear-gradient(145deg,rgba(255,190,248,0.45),rgba(224,184,255,0.32),rgba(58,34,92,0.46))]"
-                        : "bg-[linear-gradient(145deg,rgba(232,121,249,0.18),rgba(192,132,252,0.12),rgba(28,16,45,0.24))]"
+                        ? "bg-[linear-gradient(145deg,rgba(250,204,21,0.2),rgba(168,85,247,0.25),rgba(30,27,46,0.7))]"
+                        : "bg-[linear-gradient(145deg,rgba(168,85,247,0.15),rgba(138,92,246,0.1),rgba(30,27,46,0.5))]"
                     }`}
                   />
                   <span
                     aria-hidden="true"
-                    className="pointer-events-none absolute inset-x-0 top-0 h-8 bg-gradient-to-b from-white/18 to-transparent"
+                    className="pointer-events-none absolute inset-x-0 top-0 h-8 bg-gradient-to-b from-white/10 to-transparent"
                   />
                   <div className="relative z-10 flex h-full flex-col items-center justify-center gap-3 px-3 transition-opacity duration-150 group-hover:opacity-0">
-                    <div className="relative flex h-[108px] w-[108px] items-center justify-center rounded-full border border-fuchsia-100/55 bg-gradient-to-br from-fuchsia-300/45 via-violet-300/35 to-purple-600/45 backdrop-blur-md shadow-[0_10px_30px_rgba(196,76,255,0.38)]">
+                    <div className="relative flex h-[108px] w-[108px] items-center justify-center rounded-full border border-[#A855F7]/40 bg-gradient-to-br from-[#A855F7]/30 via-[#7C3AED]/25 to-[#1E1B2E]/60 shadow-[0_10px_30px_rgba(168,85,247,0.3)]">
                       <svg
                         aria-hidden="true"
                         viewBox="0 0 24 24"
@@ -123,7 +123,7 @@ export default function CharacterSelector({
 
                 {/* Back */}
                 <div className="absolute inset-0 rounded-2xl [backface-visibility:hidden] [transform:rotateY(180deg)] overflow-hidden">
-                  <div className="absolute inset-0 backdrop-blur-[18px] bg-[linear-gradient(155deg,rgba(255,170,244,0.32),rgba(216,171,255,0.24),rgba(41,24,64,0.34))]" />
+                  <div className="absolute inset-0 bg-[linear-gradient(155deg,rgba(168,85,247,0.25),rgba(124,58,237,0.2),rgba(30,27,46,0.6))]" />
                   <div className="relative z-10 flex h-full w-full flex-col items-start justify-center gap-1 px-3.5 text-left">
                     <p className="w-full break-words text-[12px] font-semibold leading-tight text-white">
                       {character.name}

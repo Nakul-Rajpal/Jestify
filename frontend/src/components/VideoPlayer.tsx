@@ -23,21 +23,21 @@ export default function VideoPlayer({
         <h3 className="text-lg font-medium text-white">{title}</h3>
       </div>
 
-      <div className="rounded-xl overflow-hidden bg-black border border-neutral-800 relative">
+      <div className="rounded-xl overflow-hidden bg-black border border-white/10 relative">
         {isLoading && !hasError && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/80 z-10">
             <div className="flex flex-col items-center gap-2">
               <svg className="w-8 h-8 animate-spin text-white" viewBox="0 0 50 50" fill="none">
-                <circle cx="25" cy="25" r="20" stroke="currentColor" strokeWidth="3" className="text-neutral-700" />
-                <path d="M25 5a20 20 0 0117.32 10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" className="text-white" />
+                <circle cx="25" cy="25" r="20" stroke="currentColor" strokeWidth="3" className="text-[#1A1730]" />
+                <path d="M25 5a20 20 0 0117.32 10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" className="text-[#FACC15]" />
               </svg>
-              <span className="text-xs text-neutral-400">Loading video...</span>
+              <span className="text-xs text-[#6B6589]">Loading video...</span>
             </div>
           </div>
         )}
 
         {hasError && (
-          <div className="aspect-video flex items-center justify-center bg-neutral-900">
+          <div className="aspect-video flex items-center justify-center bg-[#0D0B1A]">
             <div className="text-center px-6">
               <p className="text-sm text-red-400 mb-2">Failed to load video</p>
               <button
@@ -48,7 +48,7 @@ export default function VideoPlayer({
                     videoRef.current.load();
                   }
                 }}
-                className="text-xs text-neutral-400 hover:text-white underline cursor-pointer"
+                className="text-xs text-[#A8A3C0] hover:text-white underline cursor-pointer"
               >
                 Retry
               </button>
@@ -92,10 +92,10 @@ export default function VideoPlayer({
         <a
           href={videoUrl}
           download="jestify-video.mp4"
-          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-500/10 border border-blue-500/20 hover:bg-blue-500/20 transition-colors cursor-pointer"
+          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#A855F7]/10 border border-[#A855F7]/20 hover:bg-[#A855F7]/20 transition-colors cursor-pointer"
         >
           <svg
-            className="w-4 h-4 text-blue-400"
+            className="w-4 h-4 text-[#A855F7]"
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
@@ -107,7 +107,7 @@ export default function VideoPlayer({
             <polyline points="7 10 12 15 17 10" />
             <line x1="12" y1="15" x2="12" y2="3" />
           </svg>
-          <span className="text-sm text-blue-400">Download</span>
+          <span className="text-sm text-[#A855F7]">Download</span>
         </a>
       </div>
     </div>

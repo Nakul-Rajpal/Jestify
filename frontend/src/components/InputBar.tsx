@@ -94,7 +94,7 @@ export default function InputBar({
 
   return (
     <div
-      className="fixed bottom-0 left-0 right-0 z-40 bg-gradient-to-t from-[#090510]/95 via-[#0f0a1f]/72 to-transparent pt-7 pb-5 px-4"
+      className="fixed bottom-0 left-0 right-0 z-40 bg-gradient-to-t from-[#0D0B1A]/95 via-[#0D0B1A]/72 to-transparent pt-7 pb-5 px-4"
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
       onDragOver={handleDragOver}
@@ -103,8 +103,8 @@ export default function InputBar({
       <div className="max-w-3xl mx-auto relative">
         {/* Drag overlay */}
         {isDragOver && (
-          <div className="absolute inset-0 -top-20 border-2 border-dashed border-fuchsia-300/70 bg-fuchsia-300/12 rounded-3xl flex items-center justify-center z-10 pointer-events-none backdrop-blur-md">
-            <div className="text-fuchsia-100 font-medium text-lg">
+          <div className="absolute inset-0 -top-20 border-2 border-dashed border-[#FACC15]/70 bg-[#FACC15]/8 rounded-3xl flex items-center justify-center z-10 pointer-events-none backdrop-blur-md">
+            <div className="text-[#FACC15] font-medium text-lg">
               Drop files here
             </div>
           </div>
@@ -116,10 +116,10 @@ export default function InputBar({
             {uploadedDocs.map((doc) => (
               <div
                 key={doc.id}
-                className="liquid-glass-chip flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm"
+                className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm bg-[#252240] border border-white/10"
               >
                 <svg
-                  className="w-3.5 h-3.5 text-white/70 shrink-0"
+                  className="w-3.5 h-3.5 text-[#A8A3C0] shrink-0"
                   viewBox="0 0 24 24"
                   fill="none"
                   stroke="currentColor"
@@ -158,11 +158,11 @@ export default function InputBar({
         {/* Input container */}
         <div
           className={`
-            liquid-glass-toolbar flex items-center gap-2 rounded-[1.6rem] px-4 py-3
-            ring-1 ring-fuchsia-200/45
-            shadow-[0_0_0_1px_rgba(248,205,255,0.25),0_22px_55px_rgba(123,29,180,0.45)]
+            flex items-center gap-2 rounded-[1.6rem] px-4 py-3
+            bg-[#1E1B2E] border border-white/15
+            shadow-[0_8px_32px_rgba(0,0,0,0.4)]
             transition-colors duration-200
-            ${isDragOver ? "border-fuchsia-200/70" : "border-white/30"}
+            ${isDragOver ? "border-[#FACC15]/50" : ""}
             ${disabled ? "opacity-60" : ""}
           `}
         >
@@ -183,7 +183,7 @@ export default function InputBar({
             }
             disabled={disabled || isGenerating}
             rows={1}
-            className={`flex-1 bg-transparent text-white placeholder:text-white/60 resize-none outline-none text-sm leading-6 max-h-32 min-h-[24px] ${prompt.length === 0 ? "text-center" : "text-left"}`}
+            className={`flex-1 bg-transparent text-white placeholder:text-[#6B6589] resize-none outline-none text-sm leading-6 max-h-32 min-h-[24px] ${prompt.length === 0 ? "text-center" : "text-left"}`}
             style={{ height: "24px" }}
             onInput={(e) => {
               const target = e.target as HTMLTextAreaElement;
@@ -199,8 +199,8 @@ export default function InputBar({
               p-2 rounded-xl transition-all duration-200 cursor-pointer
               ${
                 canSubmit
-                  ? "bg-gradient-to-br from-fuchsia-200 to-violet-300 text-violet-950 hover:from-fuchsia-100 hover:to-violet-200 shadow-[0_8px_20px_rgba(198,105,255,0.35)]"
-                  : "bg-white/12 text-white/45 cursor-not-allowed border border-white/15"
+                  ? "bg-[#FACC15] text-[#0D0B1A] hover:bg-[#FDE047] shadow-[0_8px_20px_rgba(250,204,21,0.25)]"
+                  : "bg-white/8 text-white/45 cursor-not-allowed border border-white/15"
               }
             `}
             title="Generate video"

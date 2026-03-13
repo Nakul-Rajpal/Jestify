@@ -68,7 +68,7 @@ function ElapsedTimer() {
   }, []);
 
   return (
-    <span className="tabular-nums text-neutral-500">{formatElapsed(elapsed)}</span>
+    <span className="tabular-nums text-[#6B6589]">{formatElapsed(elapsed)}</span>
   );
 }
 
@@ -95,8 +95,8 @@ export default function JobStatusComponent({
           </h3>
           <div className="flex items-center justify-center gap-2 text-sm">
             <ElapsedTimer />
-            <span className="text-neutral-600">·</span>
-            <span className="text-neutral-400">{Math.round(progress)}%</span>
+            <span className="text-[#6B6589]">&middot;</span>
+            <span className="text-[#A8A3C0]">{Math.round(progress)}%</span>
           </div>
         </div>
       )}
@@ -126,9 +126,9 @@ export default function JobStatusComponent({
       {/* Progress bar */}
       {!isComplete && !isFailed && (
         <div className="mb-6">
-          <div className="w-full bg-neutral-800 rounded-full h-2.5 overflow-hidden">
+          <div className="w-full bg-[#1A1730] rounded-full h-2.5 overflow-hidden">
             <div
-              className="h-full rounded-full transition-all duration-700 ease-out bg-gradient-to-r from-blue-500 to-blue-400"
+              className="h-full rounded-full transition-all duration-700 ease-out bg-gradient-to-r from-[#FACC15] to-[#FDE047]"
               style={{ width: `${Math.max(progress, 2)}%` }}
             />
           </div>
@@ -142,14 +142,13 @@ export default function JobStatusComponent({
             const meta = STAGE_META[stage];
             const isActive = stage === status;
             const isDone = currentStageIdx > i;
-            const isPending = currentStageIdx < i;
 
             return (
               <div
                 key={stage}
                 className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-300 ${
                   isActive
-                    ? "bg-neutral-800/80 border border-neutral-700"
+                    ? "bg-[#252240] border border-[#A855F7]/30"
                     : isDone
                     ? "opacity-50"
                     : "opacity-30"
@@ -161,12 +160,12 @@ export default function JobStatusComponent({
                       <polyline points="20 6 9 17 4 12" />
                     </svg>
                   ) : isActive ? (
-                    <svg className="w-4 h-4 animate-spin text-blue-400 mx-auto" viewBox="0 0 24 24" fill="none">
-                      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2.5" className="text-neutral-700" />
-                      <path d="M12 2a10 10 0 018.66 5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="text-blue-400" />
+                    <svg className="w-4 h-4 animate-spin text-[#FACC15] mx-auto" viewBox="0 0 24 24" fill="none">
+                      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2.5" className="text-[#1A1730]" />
+                      <path d="M12 2a10 10 0 018.66 5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="text-[#FACC15]" />
                     </svg>
                   ) : (
-                    <span className="block w-2 h-2 rounded-full bg-neutral-600 mx-auto" />
+                    <span className="block w-2 h-2 rounded-full bg-[#6B6589] mx-auto" />
                   )}
                 </span>
                 <span
@@ -174,14 +173,14 @@ export default function JobStatusComponent({
                     isActive
                       ? "text-white"
                       : isDone
-                      ? "text-neutral-400"
-                      : "text-neutral-600"
+                      ? "text-[#A8A3C0]"
+                      : "text-[#6B6589]"
                   }`}
                 >
                   {meta.label}
                 </span>
-                {isActive && isPending === false && (
-                  <span className="ml-auto text-xs text-blue-400/80 font-medium">In progress</span>
+                {isActive && (
+                  <span className="ml-auto text-xs text-[#FACC15]/80 font-medium">In progress</span>
                 )}
                 {isDone && (
                   <span className="ml-auto text-xs text-green-500/70">Done</span>
@@ -194,8 +193,8 @@ export default function JobStatusComponent({
 
       {/* Current step detail */}
       {!isComplete && !isFailed && currentStep && (
-        <div className="bg-neutral-800/50 rounded-lg px-4 py-3 border border-neutral-800">
-          <p className="text-sm text-neutral-300 leading-relaxed">{currentStep}</p>
+        <div className="bg-[#1A1730] rounded-lg px-4 py-3 border border-white/8">
+          <p className="text-sm text-[#A8A3C0] leading-relaxed">{currentStep}</p>
         </div>
       )}
     </div>
